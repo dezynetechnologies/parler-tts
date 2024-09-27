@@ -60,7 +60,8 @@ from transformers.utils.import_utils import is_flash_attn_2_available, is_flash_
 from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
 from .dac_wrapper import DACConfig, DACModel
 
-
+from transformers import AutoFeatureExtractor
+import torchaudio
 AutoConfig.register("dac", DACConfig)
 AutoModel.register(DACConfig, DACModel)
 
@@ -713,6 +714,7 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        reference_speaker: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
         if output_attentions or layer_head_mask is not None:
@@ -755,6 +757,11 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
 
         # use key_value_states if cross attention
         current_states = key_value_states if key_value_states is not None else hidden_states
+        
+        if reference_speaker is not None:
+            # import ipdb; ipdb.set_trace()
+            current_states = torch.cat((current_states, reference_speaker), dim=1)  # Concatenate along the time dimension
+        
         if is_cross_attention and past_key_value and is_updated:
             # reuse k,v, cross_attentions
             key_states = past_key_value.key_cache[self.layer_idx]
@@ -843,7 +850,7 @@ class ParlerTTSDecoderLayer(nn.Module):
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
         self.activation_dropout = config.activation_dropout
-
+        # import ipdb; ipdb.set_trace()
         self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         cross_attn_implementation = config._attn_implementation
         if config.cross_attention_implementation_strategy == "always_eager":
@@ -880,6 +887,7 @@ class ParlerTTSDecoderLayer(nn.Module):
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = True,
         cache_position: Optional[torch.LongTensor] = None,
+        reference_speaker: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -924,6 +932,8 @@ class ParlerTTSDecoderLayer(nn.Module):
         if encoder_hidden_states is not None:
             residual = hidden_states
             hidden_states = self.encoder_attn_layer_norm(hidden_states)
+            # if reference_speaker is not None:
+            #     import ipdb; ipdb.set_trace()
             hidden_states, cross_attn_weights, cross_attn_present_key_value = self.encoder_attn(
                 hidden_states=hidden_states,
                 key_value_states=encoder_hidden_states,
@@ -933,6 +943,7 @@ class ParlerTTSDecoderLayer(nn.Module):
                 layer_head_mask=cross_attn_layer_head_mask,
                 past_key_value=past_key_value,
                 output_attentions=output_attentions,
+                reference_speaker=reference_speaker
             )
             hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
             hidden_states = residual + hidden_states
@@ -1293,6 +1304,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position=None,
+        reference_speaker: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -1324,6 +1336,8 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             prepended_sequence_length = prompt_hidden_states.shape[-2]
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
 
+        # if reference_speaker is not None:
+        #     import ipdb; ipdb.set_trace()
         return_legacy_cache = False
         return_self_attention_cache = False
         if use_cache or past_key_values is not None:
@@ -1489,6 +1503,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     output_attentions,
                     use_cache,
                     cache_position,
+                    reference_speaker,
                 )
             else:
                 layer_outputs = decoder_layer(
@@ -1506,6 +1521,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                     cache_position=cache_position,
+                    reference_speaker=reference_speaker,
                 )
             hidden_states = layer_outputs[0]
 
@@ -1662,6 +1678,7 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        reference_speaker: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPastAndCrossAttentions]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
@@ -1669,7 +1686,8 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
         )
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
-
+        
+        # import ipdb; ipdb.set_trace()
         # decoder outputs consists of (dec_features, past_key_value, dec_hidden, dec_attn)
         decoder_outputs = self.decoder(
             input_ids=input_ids,
@@ -1688,6 +1706,7 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            reference_speaker=reference_speaker
         )
 
         if not return_dict:
@@ -1759,6 +1778,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
+        reference_speaker: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithCrossAttentions]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length, num_codebooks)`, *optional*):
@@ -1787,6 +1807,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
             output_hidden_states=output_hidden_states,
             return_dict=return_dict,
             cache_position=cache_position,
+            reference_speaker=reference_speaker
         )
 
         hidden_states = outputs[0]
@@ -2643,6 +2664,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         kwargs_decoder = {
             argument[len("decoder_") :]: value for argument, value in kwargs.items() if argument.startswith("decoder_")
         }
+        
+        kwargs_decoder['reference_speaker'] = kwargs.get('reference_speaker', None)
 
         if prompt_hidden_states is None:
             if prompt_input_ids is not None:
@@ -2775,6 +2798,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         decoder_delay_pattern_mask=None,
         cache_position=None,
         inputs_embeds=None,
+        reference_speaker=None,
         **kwargs,
     ):
         if decoder_delay_pattern_mask is None:
@@ -2863,6 +2887,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             "use_cache": use_cache,
             "cache_position": cache_position,
             "inputs_embeds": inputs_embeds,
+            "reference_speaker": reference_speaker
         }
 
     def _prepare_decoder_input_ids_for_generation(
@@ -3185,6 +3210,23 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             param.requires_grad = False
         self.audio_encoder._requires_grad = False
 
+
+    def _prepare_speaker_embedding(self, f_path):
+        
+        feature_extractor = AutoFeatureExtractor.from_pretrained(
+        "parler-tts/dac_44khZ_8kbps",
+        )
+
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # feature_extractor = AutoFeatureExtractor.from_pretrained(model_id)
+        speaker_audio, init_sr = torchaudio.load(f_path)
+        speaker_audio = torchaudio.functional.resample(speaker_audio, init_sr, self.config.sampling_rate)
+        speaker_audio = speaker_audio.mean(0)
+        speaker_tensors = feature_extractor(speaker_audio, sampling_rate= self.config.sampling_rate, return_tensors="pt").input_values.to(device)
+
+        return speaker_tensors
+    
     @torch.no_grad()
     def generate(
         self,
@@ -3194,6 +3236,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         stopping_criteria: Optional[StoppingCriteriaList] = None,
         synced_gpus: Optional[bool] = None,
         streamer: Optional["BaseStreamer"] = None,
+        # reference_speaker: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -3266,7 +3309,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         model_kwargs = generation_config.update(**kwargs)  # All unused kwargs must be model kwargs
         generation_config.validate()
         self._validate_model_kwargs(model_kwargs.copy())
-
+        reference_speaker = model_kwargs.get("reference_speaker", None)
+        print(reference_speaker)
         if model_kwargs.get("encoder_outputs") is not None and type(model_kwargs["encoder_outputs"]) == tuple:
             # wrap the unconditional outputs as a BaseModelOutput for compatibility with the rest of generate
             model_kwargs["encoder_outputs"] = BaseModelOutput(last_hidden_state=model_kwargs["encoder_outputs"][0])
@@ -3311,6 +3355,11 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 model_kwargs["input_values"],
                 model_kwargs,
             )
+
+        # import ipdb; ipdb.set_trace()
+        # If reference speaker file path is passed, create speaker embeddings using DAC
+        if reference_speaker is not None:
+            model_kwargs['reference_speaker'] = self._prepare_speaker_embedding(reference_speaker)
 
         # 5. Prepare `input_ids` which will be used for auto-regressive generation
         input_ids, model_kwargs = self._prepare_decoder_input_ids_for_generation(
@@ -3426,7 +3475,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         stopping_criteria = self._get_stopping_criteria(
             generation_config=generation_config, stopping_criteria=stopping_criteria
         )
-
+        # import ipdb; ipdb.set_trace()
         if is_greedy_gen_mode:
             if generation_config.num_return_sequences > 1:
                 raise ValueError(
