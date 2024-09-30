@@ -1,7 +1,7 @@
 import torch
 from torchaudio.pipelines import SQUIM_OBJECTIVE
 import torchaudio
-import evaluate
+#import evaluate
 from transformers import (
     AutoModel,
     AutoProcessor,
@@ -12,7 +12,10 @@ from transformers import (
 )
 from accelerate.utils.memory import release_memory
 import numpy as np
-
+import torch
+from transformers import Wav2Vec2Processor, Wav2Vec2Model
+import librosa
+from scipy.spatial.distance import cosine
 
 def clap_similarity(clap_model_name_or_path, texts, audios, device, input_sampling_rate=44100):
     clap = AutoModel.from_pretrained(clap_model_name_or_path)
@@ -140,3 +143,57 @@ def wer(
     asr_pipeline.model.to("cpu")
     asr_pipeline = release_memory(asr_pipeline)
     return word_error, [t["text"] for t in transcriptions], clean_word_error, noisy_word_error, percent_clean_samples
+
+# Function to load and preprocess audio
+def load_audio(file_path, target_sr=16000):
+    audio, sr = librosa.load(file_path, sr=target_sr)
+    return audio
+
+# Function to extract speaker embedding
+def extract_embedding(audio):
+    # Step 1: Load Pre-trained Wav2Vec 2.0 Model and Processor
+    processor = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base')
+    model = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base')
+    model.eval()
+    input_values = processor(audio, sampling_rate=16000, return_tensors='pt').input_values
+    with torch.no_grad():
+        outputs = model(input_values)
+        hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
+    # Mean pooling
+    embedding = torch.mean(hidden_states, dim=1)  # [batch_size, hidden_size]
+    embedding = embedding.squeeze().cpu().numpy()
+    # Normalize
+    embedding = embedding / np.linalg.norm(embedding)
+    return embedding
+
+
+def speaker_similarity(generated_audio, 
+                       reference_speaker_audio, 
+                       threshold=0.8):
+    if generated_audio is None or reference_speaker_audio is None:
+        return None
+    
+    audio = load_audio(generated_audio)
+    embedding = extract_embedding(audio)
+
+
+    # Step 3: Verification Phase
+    test_audio = load_audio(reference_speaker_audio)
+    test_embedding = extract_embedding(test_audio)
+
+    # Step 4: Compute Similarity Score
+    similarity = np.dot(embedding, test_embedding)
+
+    # Alternatively, use cosine distance (1 - cosine similarity)
+    cosine_distance = cosine(embedding, test_embedding)
+    similarity = 1 - cosine_distance  # Convert to similarity
+
+    # Step 5: Decision Making
+    #threshold = 0.8  # Set an appropriate threshold based on validation data
+    if similarity > threshold:
+        print("Speaker Verified: Match")
+    else:
+        print("Speaker Not Verified: No Match")
+
+    print(f"Similarity Score: {similarity}")
+    return similarity
