@@ -880,7 +880,7 @@ class ParlerTTSDecoderLayer(nn.Module):
         self.cross_attn_gate = nn.Parameter(torch.tensor(1e-5))
 
         # Define a linear layer to project embeddings to 1024 dimensions
-        self.speaker_embedding_projection_layer = nn.Linear(config.speaker_embedding_dim, self.embed_dim)
+        #self.speaker_embedding_projection_layer = nn.Linear(config.speaker_embedding_dim, self.embed_dim)
         #self.speaker_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
@@ -988,10 +988,10 @@ class ParlerTTSDecoderLayer(nn.Module):
         residual = hidden_states
         # Speaker Attention
         # Step 4: Project to 1024 dimensions using the linear layer
-        reference_speaker = self.speaker_embedding_projection_layer(reference_speaker)  # [batch_size, 2048]
+        #reference_speaker = self.speaker_embedding_projection_layer(reference_speaker)  # [batch_size, 2048]
 
         # Step 5: Normalize the embedding
-        reference_speaker = reference_speaker / reference_speaker.norm(p=2, dim=1, keepdim=True)
+        #reference_speaker = reference_speaker / reference_speaker.norm(p=2, dim=1, keepdim=True)
 
         cross_attn_output,_,_ = self.speaker_attn(
             hidden_states = hidden_states, 
@@ -1001,7 +1001,7 @@ class ParlerTTSDecoderLayer(nn.Module):
             reference_speaker=reference_speaker,
             )
         #hidden_states = self.speaker_attn_layer_norm(hidden_states)
-        scaling_factor = 10  # Small value to reduce the effect
+        scaling_factor = 5  # Small value to reduce the effect
         # Fully Connected
         #residual = hidden_states
         #hidden_states = residual + self.cross_attn_gate * cross_attn_output
@@ -1321,6 +1321,8 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         self.layers = nn.ModuleList(
             [ParlerTTSDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
+        self.speaker_embedding_projection_layer = nn.Linear(config.speaker_embedding_dim, config.hidden_size)
+
         self.layer_norm = nn.LayerNorm(config.hidden_size)
         self.attn_implementation = config._attn_implementation
         encoder_attn_implementation = config._attn_implementation
@@ -1534,6 +1536,14 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                         f"The `{mask_name}` should be specified for {len(self.layers)} layers, but it is for"
                         f" {attn_mask.size()[0]}."
                     )
+
+        print("reference_speaker", reference_speaker.shape)      
+        reference_speaker = self.speaker_embedding_projection_layer(reference_speaker)
+        print("reference_speaker", reference_speaker.shape)
+        reference_speaker = torch.mean(reference_speaker, dim=1)
+        print("reference_speaker", reference_speaker.shape)
+        reference_speaker = reference_speaker / reference_speaker.norm(p=2, dim=1, keepdim=True)
+
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
             if output_hidden_states:
@@ -2288,6 +2298,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         text_encoder: Optional[PreTrainedModel] = None,
         audio_encoder: Optional[PreTrainedModel] = None,
         decoder: Optional[ParlerTTSForCausalLM] = None,
+        speaker_encoder: Optional[PreTrainedModel] = None,
     ):
         if config is None and (text_encoder is None or audio_encoder is None or decoder is None):
             raise ValueError(
@@ -2323,6 +2334,12 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         if decoder is None:
             decoder = ParlerTTSForCausalLM(config.decoder)
+        self.speaker_encoder = None
+        self.speaker_audio_processor = None
+        if speaker_encoder is None:
+            self.speaker_encoder = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base')
+            self.speaker_audio_processor = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base')
+            self.speaker_encoder.eval()
 
         self.text_encoder = text_encoder
         self.audio_encoder = audio_encoder
@@ -2720,6 +2737,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         }
         
         kwargs_decoder['reference_speaker'] = kwargs.get('reference_speaker', None)
+
 
         if prompt_hidden_states is None:
             if prompt_input_ids is not None:
@@ -3302,12 +3320,27 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         #embedding = embedding / np.linalg.norm(embedding)
         return embedding
 
+    # Function to extract speaker embedding
+    def extract_speaker_encoder_hidden_state(self,audio):
+        # Step 1: Load Pre-trained Wav2Vec 2.0 Model and Processor
+        hidden_states = None
+        input_values = self.speaker_audio_processor(audio, sampling_rate=16000, return_tensors='pt').input_values
+        with torch.no_grad():
+            outputs = self.speaker_encoder(input_values)
+            hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
+        # Mean pooling
+        embedding = torch.mean(hidden_states, dim=1)  # [batch_size, hidden_size]
+        #embedding = embedding.squeeze().cpu().numpy()
+        # Normalize
+        #embedding = embedding / np.linalg.norm(embedding)
+        return hidden_states,embedding
+    
     def _prepare_speaker_embedding(self, f_path):
         # Load and preprocess audio
         audio = self.load_audio(f_path)
         # Extract speaker embedding
-        embedding = self.extract_embedding(audio)
-        return embedding
+        #embedding = self.extract_embedding(audio)
+        return self.extract_speaker_encoder_hidden_state(audio)
 
     @torch.no_grad()
     def generate(
@@ -3441,7 +3474,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # import ipdb; ipdb.set_trace()
         # If reference speaker file path is passed, create speaker embeddings using DAC
         if reference_speaker is not None:
-            model_kwargs['reference_speaker'] = self._prepare_speaker_embedding(reference_speaker)
+            model_kwargs['reference_speaker'], model_kwargs['reference_speaker_embeddings'] = self._prepare_speaker_embedding(reference_speaker)
 
         # 5. Prepare `input_ids` which will be used for auto-regressive generation
         input_ids, model_kwargs = self._prepare_decoder_input_ids_for_generation(
