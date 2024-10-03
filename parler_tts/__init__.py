@@ -8,6 +8,7 @@ from .dac_wrapper import DACConfig, DACModel
 from .modeling_parler_tts import (
     ParlerTTSForCausalLM,
     ParlerTTSForConditionalGeneration,
+    ParlerTTSAttention,
     apply_delay_pattern_mask,
     build_delay_pattern_mask,
 )

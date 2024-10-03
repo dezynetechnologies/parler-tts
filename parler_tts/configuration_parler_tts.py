@@ -122,6 +122,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         rope_embeddings=False,
         rope_theta=10_000.0,
         cross_attention_implementation_strategy=None,
+        speaker_embedding_dim=768,
         **kwargs,
     ):
         self.vocab_size = vocab_size
@@ -148,6 +149,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         self.rope_embeddings = rope_embeddings
         self.rope_theta = rope_theta
         self.cross_attention_implementation_strategy = cross_attention_implementation_strategy
+        self.speaker_embedding_dim = speaker_embedding_dim
 
         super().__init__(
             pad_token_id=pad_token_id,

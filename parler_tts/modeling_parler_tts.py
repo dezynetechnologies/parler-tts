@@ -62,6 +62,13 @@ from .dac_wrapper import DACConfig, DACModel
 
 from transformers import AutoFeatureExtractor
 import torchaudio
+import numpy as np
+import torch
+from transformers import Wav2Vec2Processor, Wav2Vec2Model
+import librosa
+from scipy.spatial.distance import cosine
+
+
 AutoConfig.register("dac", DACConfig)
 AutoModel.register(DACConfig, DACModel)
 
@@ -389,6 +396,7 @@ class ParlerTTSAttention(nn.Module):
         layer_head_mask: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
+        reference_speaker: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
 
@@ -413,7 +421,10 @@ class ParlerTTSAttention(nn.Module):
                 past_key_value = past_key_value.self_attention_cache
 
         # use key_value_states if cross attention
-        current_states = key_value_states if key_value_states is not None else hidden_states
+        if reference_speaker is not None:
+            current_states = reference_speaker
+        else: 
+            current_states = key_value_states if key_value_states is not None else hidden_states
         if is_cross_attention and past_key_value and is_updated:
             # reuse k,v, cross_attentions
             key_states = past_key_value.key_cache[self.layer_idx]
@@ -422,7 +433,7 @@ class ParlerTTSAttention(nn.Module):
             key_states = self._shape_key_value(self.k_proj(current_states), -1, bsz)
             value_states = self._shape_key_value(self.v_proj(current_states), -1, bsz)
 
-            if not is_cross_attention:
+            if not is_cross_attention and reference_speaker is None:
                 # cached key states already have rope applied - only apply to new state
                 key_states = apply_rotary_pos_emb(key_states, cos, sin) if self.rope_embeddings else key_states
 
@@ -717,6 +728,7 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
         reference_speaker: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
+        #if output_attentions or layer_head_mask is not None or reference_speaker is not None:
         if output_attentions or layer_head_mask is not None:
             # TODO: Improve this warning with e.g. `model.config._attn_implementation = "manual"` once this is implemented.
             logger.warning_once(
@@ -731,6 +743,7 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
                 layer_head_mask=layer_head_mask,
                 output_attentions=output_attentions,
                 cache_position=cache_position,
+                reference_speaker=reference_speaker,
             )
 
         # if key_value_states are provided this layer is used as a cross-attention layer
@@ -756,11 +769,14 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
                 past_key_value = past_key_value.self_attention_cache
 
         # use key_value_states if cross attention
-        current_states = key_value_states if key_value_states is not None else hidden_states
-        
         if reference_speaker is not None:
+            current_states = reference_speaker
+        else:
+            current_states = key_value_states if key_value_states is not None else hidden_states
+        
+        #if reference_speaker is not None:
             # import ipdb; ipdb.set_trace()
-            current_states = torch.cat((current_states, reference_speaker), dim=1)  # Concatenate along the time dimension
+        #    current_states = torch.cat((current_states, reference_speaker), dim=1)  # Concatenate along the time dimension
         
         if is_cross_attention and past_key_value and is_updated:
             # reuse k,v, cross_attentions
@@ -770,7 +786,7 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
             key_states = self._shape_key_value(self.k_proj(current_states), -1, bsz)
             value_states = self._shape_key_value(self.v_proj(current_states), -1, bsz)
 
-            if not is_cross_attention and self.rope_embeddings:
+            if not is_cross_attention and self.rope_embeddings and reference_speaker is None:   
                 # cached key states already have rope applied - only apply to new state
                 key_states = apply_rotary_pos_emb(key_states, cos, sin)
 
@@ -847,6 +863,25 @@ class ParlerTTSDecoderLayer(nn.Module):
             layer_idx=layer_idx,
             config=config,
         )
+
+        self.speaker_attn = PARLERTTS_ATTENTION_CLASSES[config._attn_implementation](
+            embed_dim=self.embed_dim,
+            num_heads=config.num_attention_heads,
+            num_key_value_heads=config.num_key_value_heads,
+            dropout=config.attention_dropout,
+            is_decoder=True,
+            #is_causal=True,
+            bias=False,
+            rope_embeddings=config.rope_embeddings,
+            layer_idx=layer_idx,
+            config=config,
+        )
+        # Initialize gate with a small value
+        self.cross_attn_gate = nn.Parameter(torch.tensor(1e-5))
+
+        # Define a linear layer to project embeddings to 1024 dimensions
+        self.speaker_embedding_projection_layer = nn.Linear(config.speaker_embedding_dim, self.embed_dim)
+        #self.speaker_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
         self.activation_dropout = config.activation_dropout
@@ -943,7 +978,6 @@ class ParlerTTSDecoderLayer(nn.Module):
                 layer_head_mask=cross_attn_layer_head_mask,
                 past_key_value=past_key_value,
                 output_attentions=output_attentions,
-                reference_speaker=reference_speaker
             )
             hidden_states = nn.functional.dropout(hidden_states, p=self.dropout, training=self.training)
             hidden_states = residual + hidden_states
@@ -951,7 +985,27 @@ class ParlerTTSDecoderLayer(nn.Module):
             # add cross-attn to positions 1 of present_key_value tuple
             present_key_value = (present_key_value, cross_attn_present_key_value)
 
+        residual = hidden_states
+        # Speaker Attention
+        # Step 4: Project to 1024 dimensions using the linear layer
+        reference_speaker = self.speaker_embedding_projection_layer(reference_speaker)  # [batch_size, 2048]
+
+        # Step 5: Normalize the embedding
+        reference_speaker = reference_speaker / reference_speaker.norm(p=2, dim=1, keepdim=True)
+
+        cross_attn_output,_,_ = self.speaker_attn(
+            hidden_states = hidden_states, 
+            #past_key_value = present_key_value,  
+            cos=cos, 
+            sin=sin,
+            reference_speaker=reference_speaker,
+            )
+        #hidden_states = self.speaker_attn_layer_norm(hidden_states)
+        scaling_factor = 10  # Small value to reduce the effect
         # Fully Connected
+        #residual = hidden_states
+        #hidden_states = residual + self.cross_attn_gate * cross_attn_output
+        hidden_states = residual + scaling_factor * cross_attn_output
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.activation_fn(self.fc1(hidden_states))
@@ -3068,6 +3122,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         encoder_kwargs[model_input_name] = input_values
         audio_encoder_outputs = encoder.encode(**encoder_kwargs)
+        import ipdb; ipdb.set_trace()
         audio_codes = audio_encoder_outputs.audio_codes
         audio_scales = audio_encoder_outputs.audio_scales
 
@@ -3211,13 +3266,11 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         self.audio_encoder._requires_grad = False
 
 
-    def _prepare_speaker_embedding(self, f_path):
+    def _prepare_speaker_embedding1(self, f_path):
         
         feature_extractor = AutoFeatureExtractor.from_pretrained(
         "parler-tts/dac_44khZ_8kbps",
         )
-
-
         device = "cuda" if torch.cuda.is_available() else "cpu"
         # feature_extractor = AutoFeatureExtractor.from_pretrained(model_id)
         speaker_audio, init_sr = torchaudio.load(f_path)
@@ -3227,6 +3280,35 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         return speaker_tensors
     
+    # Function to load and preprocess audio
+    def load_audio(self,file_path, target_sr=16000):
+        audio, sr = librosa.load(file_path, sr=target_sr)
+        return audio
+
+    # Function to extract speaker embedding
+    def extract_embedding(self,audio):
+        # Step 1: Load Pre-trained Wav2Vec 2.0 Model and Processor
+        processor = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base')
+        model = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base')
+        model.eval()
+        input_values = processor(audio, sampling_rate=16000, return_tensors='pt').input_values
+        with torch.no_grad():
+            outputs = model(input_values)
+            hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
+        # Mean pooling
+        embedding = torch.mean(hidden_states, dim=1)  # [batch_size, hidden_size]
+        #embedding = embedding.squeeze().cpu().numpy()
+        # Normalize
+        #embedding = embedding / np.linalg.norm(embedding)
+        return embedding
+
+    def _prepare_speaker_embedding(self, f_path):
+        # Load and preprocess audio
+        audio = self.load_audio(f_path)
+        # Extract speaker embedding
+        embedding = self.extract_embedding(audio)
+        return embedding
+
     @torch.no_grad()
     def generate(
         self,
