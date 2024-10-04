@@ -171,3 +171,5 @@ tags
 .ruff_cache
 
 wandb
+
+/training_data

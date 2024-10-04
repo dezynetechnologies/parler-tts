@@ -864,18 +864,23 @@ class ParlerTTSDecoderLayer(nn.Module):
             config=config,
         )
 
-        self.speaker_attn = PARLERTTS_ATTENTION_CLASSES[config._attn_implementation](
-            embed_dim=self.embed_dim,
-            num_heads=config.num_attention_heads,
-            num_key_value_heads=config.num_key_value_heads,
-            dropout=config.attention_dropout,
-            is_decoder=True,
-            #is_causal=True,
-            bias=False,
-            rope_embeddings=config.rope_embeddings,
-            layer_idx=layer_idx,
-            config=config,
-        )
+        speaker_attn_factor = config.num_hidden_layers / config.num_of_speaker_attn_layers
+        # add speaker attention after every 6th decoder layer
+        if layer_idx % speaker_attn_factor == 0:
+            self.speaker_attn = PARLERTTS_ATTENTION_CLASSES[config._attn_implementation](
+                    embed_dim=self.embed_dim,
+                    num_heads=config.num_attention_heads,
+                    num_key_value_heads=config.num_key_value_heads,
+                    dropout=config.attention_dropout,
+                    is_decoder=True,
+                    #is_causal=True,
+                    bias=False,
+                    rope_embeddings=config.rope_embeddings,
+                    layer_idx=layer_idx,
+                    config=config,
+                )
+        else:
+            self.speaker_attn = None
         # Initialize gate with a small value
         self.cross_attn_gate = nn.Parameter(torch.tensor(1e-5))
 
@@ -993,19 +998,24 @@ class ParlerTTSDecoderLayer(nn.Module):
         # Step 5: Normalize the embedding
         #reference_speaker = reference_speaker / reference_speaker.norm(p=2, dim=1, keepdim=True)
 
-        cross_attn_output,_,_ = self.speaker_attn(
-            hidden_states = hidden_states, 
-            #past_key_value = present_key_value,  
-            cos=cos, 
-            sin=sin,
-            reference_speaker=reference_speaker,
-            )
+        # import ipdb; ipdb.set_trace()
+        cross_attn_output = None
+        if self.speaker_attn is not None:
+            cross_attn_output,_,_ = self.speaker_attn(
+                hidden_states = hidden_states, 
+                #past_key_value = present_key_value,  
+                cos=cos, 
+                sin=sin,
+                reference_speaker=reference_speaker,
+                )
         #hidden_states = self.speaker_attn_layer_norm(hidden_states)
         scaling_factor = 5  # Small value to reduce the effect
         # Fully Connected
         #residual = hidden_states
         #hidden_states = residual + self.cross_attn_gate * cross_attn_output
-        hidden_states = residual + scaling_factor * cross_attn_output
+        if cross_attn_output is not None:
+            hidden_states = residual + scaling_factor * cross_attn_output
+
         residual = hidden_states
         hidden_states = self.final_layer_norm(hidden_states)
         hidden_states = self.activation_fn(self.fc1(hidden_states))
@@ -1322,7 +1332,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             [ParlerTTSDecoderLayer(config, layer_idx) for layer_idx in range(config.num_hidden_layers)]
         )
         self.speaker_embedding_projection_layer = nn.Linear(config.speaker_embedding_dim, config.hidden_size)
-
+        # self.speaker_embedding_projection_layer.to('cuda')
         self.layer_norm = nn.LayerNorm(config.hidden_size)
         self.attn_implementation = config._attn_implementation
         encoder_attn_implementation = config._attn_implementation
@@ -1537,8 +1547,13 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                         f" {attn_mask.size()[0]}."
                     )
 
-        print("reference_speaker", reference_speaker.shape)      
-        reference_speaker = self.speaker_embedding_projection_layer(reference_speaker)
+        print("reference_speaker", reference_speaker.shape) 
+        # import ipdb; ipdb.set_trace();
+        # reference_speaker.to_device('cuda:0')     
+        device = torch.device('cuda:0')
+        print(device)
+        # reference_speaker.to(device)
+        reference_speaker = self.speaker_embedding_projection_layer(reference_speaker.to(device))
         print("reference_speaker", reference_speaker.shape)
         reference_speaker = torch.mean(reference_speaker, dim=1)
         print("reference_speaker", reference_speaker.shape)
@@ -3324,7 +3339,12 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
     def extract_speaker_encoder_hidden_state(self,audio):
         # Step 1: Load Pre-trained Wav2Vec 2.0 Model and Processor
         hidden_states = None
+
+        self.speaker_audio_processor = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base')
+        self.speaker_encoder = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base')
+        self.speaker_encoder.eval()
         input_values = self.speaker_audio_processor(audio, sampling_rate=16000, return_tensors='pt').input_values
+        import ipdb; ipdb.set_trace();
         with torch.no_grad():
             outputs = self.speaker_encoder(input_values)
             hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
