@@ -123,7 +123,7 @@ class ParlerTTSDecoderConfig(PretrainedConfig):
         rope_theta=10_000.0,
         cross_attention_implementation_strategy=None,
         speaker_embedding_dim=768,
-        num_of_speaker_attn_layers=6,
+        num_of_speaker_attn_layers=24,
         **kwargs,
     ):
         self.vocab_size = vocab_size

@@ -867,6 +867,7 @@ class ParlerTTSDecoderLayer(nn.Module):
         speaker_attn_factor = config.num_hidden_layers / config.num_of_speaker_attn_layers
         # add speaker attention after every 6th decoder layer
         if layer_idx % speaker_attn_factor == 0:
+            print("speaker attention added")
             self.speaker_attn = PARLERTTS_ATTENTION_CLASSES[config._attn_implementation](
                     embed_dim=self.embed_dim,
                     num_heads=config.num_attention_heads,
@@ -1009,7 +1010,7 @@ class ParlerTTSDecoderLayer(nn.Module):
                 reference_speaker=reference_speaker,
                 )
         #hidden_states = self.speaker_attn_layer_norm(hidden_states)
-        scaling_factor = 5  # Small value to reduce the effect
+        scaling_factor = 5*1  # Small value to reduce the effect
         # Fully Connected
         #residual = hidden_states
         #hidden_states = residual + self.cross_attn_gate * cross_attn_output
@@ -1554,6 +1555,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         print(device)
         # reference_speaker.to(device)
         reference_speaker = self.speaker_embedding_projection_layer(reference_speaker.to(device))
+        # import ipdb; ipdb.set_trace()
         print("reference_speaker", reference_speaker.shape)
         reference_speaker = torch.mean(reference_speaker, dim=1)
         print("reference_speaker", reference_speaker.shape)
@@ -3353,14 +3355,79 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         #embedding = embedding.squeeze().cpu().numpy()
         # Normalize
         #embedding = embedding / np.linalg.norm(embedding)
+        import ipdb; ipdb.set_trace();
         return hidden_states,embedding
     
+
+    # recent change
+    def _get_speech_token_and_speaker_embedding(self, audio, f_path):
+        hidden_states, speaker_embedding = self.extract_speaker_encoder_hidden_state(audio)
+        from . import s3tokenizer
+        # import s3tokenizer
+        import time
+        tokenizer = s3tokenizer.load_model("speech_tokenizer_v1").cuda()  # or "speech_tokenizer_v1_25hz"
+        tokenizer = s3tokenizer.load_model("speech_tokenizer_v1_25hz").cuda() 
+        mels = []
+
+        import ipdb; ipdb.set_trace()
+        wav_paths = [f_path]
+        start_time = time.time()
+        for wav_path in wav_paths:
+            audio = s3tokenizer.load_audio(wav_path)
+            mels.append(s3tokenizer.log_mel_spectrogram(audio))
+        mels, mels_lens = s3tokenizer.padding(mels)
+        speech_token, speech_token_len = tokenizer.quantize(mels.cuda(), mels_lens.cuda())
+
+        # print(f"Time: {time.time() - start_time}")
+        # for i in range(len(wav_paths)):
+        #     print(codes[i, :codes_lens[i].item()])
+        #     print(codes.shape)
+        # return speech_token, speech_token_len
+
+        speech_token = speech_token.unsqueeze(2)
+        speech_token_repeat = speech_token.repeat(1, 1, 768)
+
+        # padding = (0, hidden_states.size(1) - speech_token_repeat.size(1))
+
+        # speech_token_padded = torch.nn.functional.pad(speech_token_repeat, padding)
+        hidden_states = hidden_states.to(speech_token_repeat.device)
+        concatenated_tensor = torch.cat((hidden_states, speech_token_repeat), dim=1)
+
+        print(concatenated_tensor.shape)
+
+        return concatenated_tensor, speaker_embedding
+
+    # def _get_speech_token_and_speaker_embedding_via_projection(self, audio, f_path):
+    #     hidden_states, speaker_embedding = self.extract_speaker_encoder_hidden_state(audio)
+    #     from . import s3tokenizer
+    #     # import s3tokenizer
+    #     import time
+    #     tokenizer = s3tokenizer.load_model("speech_tokenizer_v1").cuda()  # or "speech_tokenizer_v1_25hz"
+    #     tokenizer = s3tokenizer.load_model("speech_tokenizer_v1_25hz").cuda() 
+    #     mels = []
+
+    #     import ipdb; ipdb.set_trace()
+    #     wav_paths = [f_path]
+    #     start_time = time.time()
+    #     for wav_path in wav_paths:
+    #         audio = s3tokenizer.load_audio(wav_path)
+    #         mels.append(s3tokenizer.log_mel_spectrogram(audio))
+    #     mels, mels_lens = s3tokenizer.padding(mels)
+    #     speech_token, speech_token_len = tokenizer.quantize(mels.cuda(), mels_lens.cuda())
+
+    #     speech_token_pooled = torch.mean(speech_token, dim=1).unsqueeze(1).expand(-1, 2768, -1)
+
+
+
     def _prepare_speaker_embedding(self, f_path):
         # Load and preprocess audio
         audio = self.load_audio(f_path)
         # Extract speaker embedding
         #embedding = self.extract_embedding(audio)
-        return self.extract_speaker_encoder_hidden_state(audio)
+        # return self.extract_speaker_encoder_hidden_state(audio)
+
+        # recent change
+        return self._get_speech_token_and_speaker_embedding(audio, f_path)
 
     @torch.no_grad()
     def generate(

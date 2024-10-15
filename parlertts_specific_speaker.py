@@ -78,4 +78,4 @@ prompt_input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
 
 generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids, reference_speaker = 'dheeraj_55s.mp3')
 audio_arr = generation.cpu().numpy().squeeze()
-sf.write("parler_tts_out_partial_6_notes.wav", audio_arr, model.config.sampling_rate)
+sf.write("parler_tts_out_partial_with_speech_token_24_layers_scaling_1x.wav", audio_arr, model.config.sampling_rate)
