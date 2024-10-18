@@ -33,6 +33,7 @@ from .utils import (
     mask_to_bias,
     log_mel_spectrogram,
     load_audio,
+    process_audio,
     padding
 )
 

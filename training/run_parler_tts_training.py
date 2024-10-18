@@ -45,7 +45,9 @@ from transformers.utils import send_example_telemetry
 from accelerate import Accelerator, skip_first_batches
 from accelerate.utils import set_seed, AutocastKwargs, InitProcessGroupKwargs, TorchDynamoPlugin
 from accelerate.utils.memory import release_memory
-
+from transformers import Wav2Vec2Processor, Wav2Vec2Model
+# from . import s3tokenizer
+from parler_tts import s3tokenizer
 from parler_tts import (
     ParlerTTSConfig,
     ParlerTTSForConditionalGeneration,
@@ -229,6 +231,7 @@ def main():
     # assume that the dataset has been saved to `save_to_disk` if the latter is not empty
     dataset_was_precomputed = len(os.listdir(data_args.save_to_disk)) > 0
     if dataset_was_precomputed:
+        import ipdb; ipdb.set_trace()
         with accelerator.local_main_process_first():
             vectorized_datasets = datasets.load_from_disk(data_args.save_to_disk)
     else:
@@ -237,11 +240,13 @@ def main():
         columns_to_keep = {
             "target_audio_column_name": data_args.target_audio_column_name,
             "prompt_column_name": data_args.prompt_column_name,
+            "reference_speaker": "reference_speaker"
         }
         if data_args.description_column_name is not None:
             columns_to_keep["description_column_name"] = data_args.description_column_name
 
         if training_args.do_train:
+            import ipdb; ipdb.set_trace()
             raw_datasets["train"] = load_multiple_datasets(
                 accelerator,
                 data_args.train_dataset_name,
@@ -379,14 +384,86 @@ def main():
                     input_columns=[description_column_name],
                 )
 
+            def extract_speaker_encoder_hidden_state(audio):
+        # Step 1: Load Pre-trained Wav2Vec 2.0 Model and Processor
+                hidden_states = None
+
+                speaker_audio_processor = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base')
+                speaker_encoder = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base')
+                # to supress the eval output on a new output window
+                with open(os.devnull, 'w') as devnull:
+                    original_stdout = sys.stdout
+                    sys.stdout = devnull
+                    speaker_encoder.eval()
+                    sys.stdout = original_stdout
+                # import ipdb; ipdb.set_trace()
+                input_values = speaker_audio_processor(audio.get('array'), sampling_rate=16000, return_tensors='pt').input_values
+                # import ipdb; ipdb.set_trace();
+                with torch.no_grad():
+                    outputs = speaker_encoder(input_values)
+                    hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
+                # Mean pooling
+                embedding = torch.mean(hidden_states, dim=1)  # [batch_size, hidden_size]
+                #embedding = embedding.squeeze().cpu().numpy()
+                # Normalize
+                #embedding = embedding / np.linalg.norm(embedding)
+                # import ipdb; ipdb.set_trace();
+                return hidden_states,embedding
+
+        def _get_speech_token_and_speaker_embedding(audio):
+            hidden_states, speaker_embedding = extract_speaker_encoder_hidden_state(audio)
+            # from . import s3tokenizer
+            # import s3tokenizer
+            import time
+            # tokenizer = s3tokenizer.load_model("speech_tokenizer_v1").cuda()  # or "speech_tokenizer_v1_25hz"
+            # tokenizer = s3tokenizer.load_model("speech_tokenizer_v1_25hz").cuda() 
+            tokenizer = s3tokenizer.load_model("speech_tokenizer_v1_25hz")
+            mels = []
+
+            # import ipdb; ipdb.set_trace()
+            # wav_paths = [f_path]
+            start_time = time.time()
+            # for wav_path in wav_paths:
+            #     audio = s3tokenizer.load_audio(wav_path)
+            #     mels.append(s3tokenizer.log_mel_spectrogram(audio))
+
+            audio = audio.get('array')
+            # for wav in audio:
+            # ref_audio = s3tokenizer.load_audio(audio)
+            ref_audio = s3tokenizer.process_audio(audio)
+            mels.append(s3tokenizer.log_mel_spectrogram(ref_audio))
+            # ref_audio = s3tokenizer.load_audio(audio)
+
+            mels, mels_lens = s3tokenizer.padding(mels)
+            # speech_token, speech_token_len = tokenizer.quantize(mels.cuda(), mels_lens.cuda())
+            speech_token, speech_token_len = tokenizer.quantize(mels, mels_lens)
+
+            # print(f"Time: {time.time() - start_time}")
+            # for i in range(len(wav_paths)):
+            #     print(codes[i, :codes_lens[i].item()])
+            #     print(codes.shape)
+            # return speech_token, speech_token_len
+
+            speech_token = speech_token.unsqueeze(2)
+            speech_token_repeat = speech_token.repeat(1, 1, 768)
+
+            # padding = (0, hidden_states.size(1) - speech_token_repeat.size(1))
+
+            # speech_token_padded = torch.nn.functional.pad(speech_token_repeat, padding)
+            hidden_states = hidden_states.to(speech_token_repeat.device)
+            concatenated_tensor = torch.cat((hidden_states, speech_token_repeat), dim=1)
+
+            print(concatenated_tensor.shape)
+
+            return concatenated_tensor, speaker_embedding
         # Preprocessing the dataset.
         # We need to tokenize the texts.
-        def pass_through_processors(description, prompt):
+        def pass_through_processors(description, prompt, reference_speaker):
             batch = {}
-
+            # import ipdb; ipdb.set_trace()
             batch["input_ids"] = description_tokenizer(description.strip())["input_ids"]
             batch["prompt_input_ids"] = prompt_tokenizer(prompt.strip())["input_ids"]
-
+            batch["reference_speaker"], _ = _get_speech_token_and_speaker_embedding(reference_speaker)
             return batch
 
         with accelerator.local_main_process_first():
@@ -394,7 +471,7 @@ def main():
             vectorized_datasets = raw_datasets.map(
                 pass_through_processors,
                 remove_columns=next(iter(raw_datasets.values())).column_names,
-                input_columns=[description_column_name, prompt_column_name],
+                input_columns=[description_column_name, prompt_column_name, "reference_speaker"],
                 num_proc=num_workers,
                 desc="preprocess datasets",
             )
@@ -736,6 +813,7 @@ def main():
         num_training_steps=total_train_steps * accelerator.num_processes,
     )
 
+    # import ipdb; ipdb.set_trace()
     # Instantiate custom data collator
     data_collator = DataCollatorParlerTTSWithPadding(
         prompt_tokenizer=prompt_tokenizer,
@@ -860,6 +938,7 @@ def main():
         accelerator,
         autocast_kwargs,
     ):
+        import ipdb; ipdb.set_trace()
         if mixed_precision == "fp16":
             # fp16 doesn't work with T5-like models
             with accelerator.autocast(autocast_handler=autocast_kwargs):

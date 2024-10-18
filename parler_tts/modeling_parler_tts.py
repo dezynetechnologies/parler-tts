@@ -1548,18 +1548,19 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                         f" {attn_mask.size()[0]}."
                     )
 
-        print("reference_speaker", reference_speaker.shape) 
-        # import ipdb; ipdb.set_trace();
-        # reference_speaker.to_device('cuda:0')     
-        device = torch.device('cuda:0')
-        print(device)
-        # reference_speaker.to(device)
-        reference_speaker = self.speaker_embedding_projection_layer(reference_speaker.to(device))
-        # import ipdb; ipdb.set_trace()
-        print("reference_speaker", reference_speaker.shape)
-        reference_speaker = torch.mean(reference_speaker, dim=1)
-        print("reference_speaker", reference_speaker.shape)
-        reference_speaker = reference_speaker / reference_speaker.norm(p=2, dim=1, keepdim=True)
+        if reference_speaker is not None:
+            print("reference_speaker", reference_speaker.shape) 
+            # import ipdb; ipdb.set_trace();
+            # reference_speaker.to_device('cuda:0')     
+            device = torch.device('cuda:0')
+            print(device)
+            # reference_speaker.to(device)
+            reference_speaker = self.speaker_embedding_projection_layer(reference_speaker.to(device))
+            # import ipdb; ipdb.set_trace()
+            print("reference_speaker", reference_speaker.shape)
+            reference_speaker = torch.mean(reference_speaker, dim=1)
+            print("reference_speaker", reference_speaker.shape)
+            reference_speaker = reference_speaker / reference_speaker.norm(p=2, dim=1, keepdim=True)
 
         for idx, decoder_layer in enumerate(self.layers):
             # add LayerDrop (see https://arxiv.org/abs/1909.11556 for description)
@@ -3757,6 +3758,17 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
             or generation_config.pad_token_id in output_ids
             or generation_config.eos_token_id in output_ids
         )
+
+        # Add token2wav conversion here from cozyvoice instead of decoding using dac
+        import ipdb; ipdb.set_trace()
+        print("Output Ids")
+        flattened_outputs = output_ids.flatten(start_dim=1)
+        print("flattened outputs {}".format(flattened_outputs))
+
+        with open('flattened_output.txt', 'w') as f:
+            for value in flattened_outputs[0]:  # Iterate over the first row
+                f.write(f"{value}\n")
+
         if not decode_sequentially:
             output_values = self.audio_encoder.decode(
                 output_ids,

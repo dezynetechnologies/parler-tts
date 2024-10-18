@@ -140,11 +140,41 @@ def load_audio(file: str, sr: int = 16000):
     -------
     A torch.Tensor containing the audio waveform, in float32 dtype.
     """
+
+    print("Audio file is {}".format(file))
     audio, sample_rate = torchaudio.load(file)
     if sample_rate != sr:
         audio = torchaudio.transforms.Resample(sample_rate, sr)(audio)
     audio = audio[0]  # get the first channel
     return audio
+
+def process_audio(audio_array: np.ndarray, sr: int = 16000, original_sr: int = 48000):
+    """
+    Process an audio NumPy array, resampling as necessary.
+
+    Parameters
+    ----------
+    audio_array: np.ndarray
+        The audio data as a NumPy array.
+
+    sr: int
+        The sample rate to resample the audio to.
+
+    original_sr: int
+        The original sample rate of the audio data.
+
+    Returns
+    -------
+    A torch.Tensor containing the audio waveform, in float32 dtype.
+    """
+    # Convert the NumPy array to a torch Tensor
+    audio = torch.from_numpy(audio_array).float()
+
+    # Resample if necessary
+    if original_sr != sr:
+        audio = torchaudio.transforms.Resample(original_sr, sr)(audio.unsqueeze(0))  # Add a channel dimension
+
+    return audio.squeeze(0)  # Remove the channel dimension
 
 
 @lru_cache(maxsize=None)

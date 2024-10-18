@@ -20,6 +20,7 @@ class DataCollatorEncodecWithPadding:
 
     feature_extractor: AutoFeatureExtractor
     audio_column_name: str
+    reference_speaker_column: Optional[str] = None
     feature_extractor_input_name: Optional[str] = "input_values"
     max_length: Optional[int] = None
     padding: Optional[str] = "longest"
@@ -28,10 +29,12 @@ class DataCollatorEncodecWithPadding:
         # split inputs and labels since they have to be of different lengths and need
         # different padding methods
         audios = [feature[self.audio_column_name]["array"] for feature in features]
+        speaker_audios = [feature[self.reference_speaker_column]["array"] for feature in features]
         len_audio = [len(audio) for audio in audios]
+        len_speaker_audio = [len(audio) for audio in speaker_audios]
         if self.max_length is not None:
             audios = [audio[: min(l, self.max_length)] for audio, l in zip(audios, len_audio)]
-
+            speaker_audios = [audio[: min(l, self.max_length)] for audio, l in zip(speaker_audios, len_speaker_audio)]
         # since resampling has already been performed in the 'load_multiple_datasets' function,
         # a fixed sampling_rate(44100hz) is passed to the feature_extractor.
         sampling_rate = self.feature_extractor.sampling_rate
@@ -77,7 +80,7 @@ class DataCollatorParlerTTSWithPadding:
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
         # split inputs and labels since they have to be of different lengths and need
         # different padding methods
-
+        # import ipdb; ipdb.set_trace()
         labels = [torch.tensor(feature["labels"]).transpose(0, 1) for feature in features]
         # (bsz, seq_len, num_codebooks)
         labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
@@ -87,7 +90,11 @@ class DataCollatorParlerTTSWithPadding:
             )
 
         input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
+        # import ipdb; ipdb.set_trace()
+        print("Features are {}".format(features[0].keys()))
+        reference_speaker = [{"reference_speaker": feature["reference_speaker"]} for feature in features]
 
+        print("Ref Speaker is {}".format(reference_speaker))
         input_ids = self.description_tokenizer.pad(
             input_ids,
             return_tensors="pt",
@@ -189,6 +196,7 @@ def load_multiple_datasets(
     sampling_rate: Optional[int] = None,
     audio_column_name: Optional[str] = None,
     logger: Optional[logging.Logger] = None,
+    reference_speaker_column: Optional[str] = None,
     **kwargs,
 ) -> Union[Dataset, IterableDataset]:
     dataset_names_dict = convert_dataset_str_to_list(
@@ -217,6 +225,9 @@ def load_multiple_datasets(
             if sampling_rate is not None and audio_column_name is not None:
                 # resample target audio
                 dataset = dataset.cast_column(audio_column_name, datasets.features.Audio(sampling_rate=sampling_rate))
+
+            if sampling_rate is not None and reference_speaker_column is not None:
+                 dataset = dataset.cast_column(reference_speaker_column, datasets.features.Audio(sampling_rate=sampling_rate))
 
             metadata_dataset_name = dataset_dict["metadata_dataset_name"]
             if metadata_dataset_name is not None:

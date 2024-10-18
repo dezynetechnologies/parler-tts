@@ -10,12 +10,12 @@
     "overwrite_output_dir": true,
     "output_dir": "./output_dir_training",
 
-    "train_dataset_name": "kaushalgawri/emotion_dataset_for_tts_with_transcriptions",
+    "train_dataset_name": "kaushalgawri/emotion_dataset_for_tts_with_transcriptions_and_reference_voice_v1",
     "train_metadata_dataset_name": "kaushalgawri/emotion_dataset_with_tags_and_descriptions_with_emotions_v2",
     "train_dataset_config_name": "default",
     "train_split_name": "train",
 
-    "eval_dataset_name": "kaushalgawri/emotion_dataset_for_tts_with_transcriptions",
+    "eval_dataset_name": "kaushalgawri/emotion_dataset_for_tts_with_transcriptions_and_reference_voice_v1",
     "eval_metadata_dataset_name": "kaushalgawri/emotion_dataset_with_tags_and_descriptions_with_emotions_v2",
     "eval_dataset_config_name": "default",
     "eval_split_name": "test",
