@@ -29,12 +29,12 @@ class DataCollatorEncodecWithPadding:
         # split inputs and labels since they have to be of different lengths and need
         # different padding methods
         audios = [feature[self.audio_column_name]["array"] for feature in features]
-        speaker_audios = [feature[self.reference_speaker_column]["array"] for feature in features]
+        # speaker_audios = [feature[self.reference_speaker_column]["array"] for feature in features]
         len_audio = [len(audio) for audio in audios]
-        len_speaker_audio = [len(audio) for audio in speaker_audios]
+        # len_speaker_audio = [len(audio) for audio in speaker_audios]
         if self.max_length is not None:
             audios = [audio[: min(l, self.max_length)] for audio, l in zip(audios, len_audio)]
-            speaker_audios = [audio[: min(l, self.max_length)] for audio, l in zip(speaker_audios, len_speaker_audio)]
+            # speaker_audios = [audio[: min(l, self.max_length)] for audio, l in zip(speaker_audios, len_speaker_audio)]
         # since resampling has already been performed in the 'load_multiple_datasets' function,
         # a fixed sampling_rate(44100hz) is passed to the feature_extractor.
         sampling_rate = self.feature_extractor.sampling_rate

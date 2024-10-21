@@ -498,6 +498,7 @@ def main():
             feature_extractor_input_name=feature_extractor_input_name,
             max_length=max_target_length,
             padding=padding,
+            reference_speaker_column="reference_speaker",
         )
 
         def apply_audio_decoder(batch):

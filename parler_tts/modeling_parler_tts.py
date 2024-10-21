@@ -1897,6 +1897,12 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         lm_logits = torch.stack([head(hidden_states) for head in self.lm_heads], dim=1)
 
         loss = None
+        # also add speaker similarity CosineEmbeddingLoss
+        # compare the output hidden states with the reference speaker embedding and compute similarity and loss using CosineEmbeddingLoss
+        cosine_loss = nn.CosineEmbeddingLoss()
+        # using torch.ones to maximise cosine similarity instead of -1
+        cosine_output = cosine_loss(hidden_states, reference_speaker, torch.ones(hidden_states.shape[0], device=hidden_states.device))
+        cosine_output.backward()
         if labels is not None:
             # since encoder hidden states have concatenated to hidden states, take the last hidden states corresponding to labels
             logits = lm_logits[:, :, -labels.shape[1] :]
@@ -1920,6 +1926,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
                 loss += codebook_loss
 
             loss = loss / self.config.num_codebooks
+            loss += cosine_output
 
         # (bsz, num_codebooks, seq_len, vocab_size) -> (bsz * num_codebooks, seq_len, vocab_size)
         lm_logits = lm_logits.reshape(-1, *lm_logits.shape[2:])
