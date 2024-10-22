@@ -80,7 +80,7 @@ class DataCollatorParlerTTSWithPadding:
     def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
         # split inputs and labels since they have to be of different lengths and need
         # different padding methods
-        # import ipdb; ipdb.set_trace()
+        # import ; .set_trace()
         labels = [torch.tensor(feature["labels"]).transpose(0, 1) for feature in features]
         # (bsz, seq_len, num_codebooks)
         labels = torch.nn.utils.rnn.pad_sequence(labels, batch_first=True, padding_value=-100)
@@ -89,12 +89,30 @@ class DataCollatorParlerTTSWithPadding:
                 labels, pad=(0, 0, 0, max(self.audio_max_length - labels.shape[1], 0)), value=-100
             )
 
+        reference_speaker = [{"reference_speaker": feature["reference_speaker"]} for feature in 
+            features]
+
+        reference_speaker_data = [speaker['reference_speaker'] for speaker in reference_speaker]
+
+        reference_speaker_tensors = [torch.tensor(speaker) for speaker in reference_speaker_data]
+
+        # as reference tensors can be of different length, pad it based on the max tensor size
+        reference_speaker_max_length = max([speaker.size(1) for speaker in reference_speaker_tensors])
+        # print("Max second dim for speaker {}".format(reference_speaker_max_length))
+        padded_reference_speaker_tensors = [torch.nn.functional.pad(speaker, (0, 0, 0, reference_speaker_max_length - speaker.size(1))) for speaker in reference_speaker_tensors]
+        reference_speaker_stacked_tensors = torch.stack(padded_reference_speaker_tensors)
+        # print("Ref Speaker is {}".format(reference_speaker))
+        # import ipdb; ipdb.set_trace()
+        # print("Ref Speaker is {}".format(reference_speaker))
+
         input_ids = [{"input_ids": feature["input_ids"]} for feature in features]
         # import ipdb; ipdb.set_trace()
-        print("Features are {}".format(features[0].keys()))
-        reference_speaker = [{"reference_speaker": feature["reference_speaker"]} for feature in features]
+        # print("Features are {}".format(features[0].keys()))
+        # reference_speaker = [{"reference_speaker": feature["reference_speaker"]} for feature in features]
+        # print(reference_speaker)
+        # print("Ref Speaker is {}".format(reference_speaker))
+        # import ipdb; ipdb.set_trace()
 
-        print("Ref Speaker is {}".format(reference_speaker))
         input_ids = self.description_tokenizer.pad(
             input_ids,
             return_tensors="pt",
@@ -115,6 +133,8 @@ class DataCollatorParlerTTSWithPadding:
         )
 
         batch["prompt_input_ids"] = prompt_input_ids["input_ids"]
+        # batch["reference_speaker"] = reference_speaker
+        batch["reference_speaker"] = reference_speaker_stacked_tensors
         if "attention_mask" in prompt_input_ids:
             batch["prompt_attention_mask"] = prompt_input_ids["attention_mask"]
 

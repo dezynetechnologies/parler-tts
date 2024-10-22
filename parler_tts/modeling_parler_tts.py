@@ -775,7 +775,7 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
             current_states = key_value_states if key_value_states is not None else hidden_states
         
         #if reference_speaker is not None:
-            # import ipdb; ipdb.set_trace()
+            # import ; .set_trace()
         #    current_states = torch.cat((current_states, reference_speaker), dim=1)  # Concatenate along the time dimension
         
         if is_cross_attention and past_key_value and is_updated:
@@ -891,7 +891,7 @@ class ParlerTTSDecoderLayer(nn.Module):
         self.dropout = config.dropout
         self.activation_fn = ACT2FN[config.activation_function]
         self.activation_dropout = config.activation_dropout
-        # import ipdb; ipdb.set_trace()
+        # import ; .set_trace()
         self.self_attn_layer_norm = nn.LayerNorm(self.embed_dim)
         cross_attn_implementation = config._attn_implementation
         if config.cross_attention_implementation_strategy == "always_eager":
@@ -974,7 +974,7 @@ class ParlerTTSDecoderLayer(nn.Module):
             residual = hidden_states
             hidden_states = self.encoder_attn_layer_norm(hidden_states)
             # if reference_speaker is not None:
-            #     import ipdb; ipdb.set_trace()
+            #     import ; .set_trace()
             hidden_states, cross_attn_weights, cross_attn_present_key_value = self.encoder_attn(
                 hidden_states=hidden_states,
                 key_value_states=encoder_hidden_states,
@@ -999,7 +999,7 @@ class ParlerTTSDecoderLayer(nn.Module):
         # Step 5: Normalize the embedding
         #reference_speaker = reference_speaker / reference_speaker.norm(p=2, dim=1, keepdim=True)
 
-        # import ipdb; ipdb.set_trace()
+        # import ; .set_trace()
         cross_attn_output = None
         if self.speaker_attn is not None:
             cross_attn_output,_,_ = self.speaker_attn(
@@ -1404,7 +1404,7 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
             inputs_embeds = torch.cat([prompt_hidden_states, inputs_embeds], dim=1)
 
         # if reference_speaker is not None:
-        #     import ipdb; ipdb.set_trace()
+        #     import ; .set_trace()
         return_legacy_cache = False
         return_self_attention_cache = False
         if use_cache or past_key_values is not None:
@@ -1549,17 +1549,18 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
                     )
 
         if reference_speaker is not None:
-            print("reference_speaker", reference_speaker.shape) 
-            # import ipdb; ipdb.set_trace();
+            # print("reference_speaker", reference_speaker.shape) 
+            # import ; .set_trace();
             # reference_speaker.to_device('cuda:0')     
             device = torch.device('cuda:0')
-            print(device)
+            # import ipdb; ipdb.set_trace()
+            # print(device)
             # reference_speaker.to(device)
             reference_speaker = self.speaker_embedding_projection_layer(reference_speaker.to(device))
-            # import ipdb; ipdb.set_trace()
-            print("reference_speaker", reference_speaker.shape)
+            # import ; .set_trace()
+            # print("reference_speaker", reference_speaker.shape)
             reference_speaker = torch.mean(reference_speaker, dim=1)
-            print("reference_speaker", reference_speaker.shape)
+            # print("reference_speaker", reference_speaker.shape)
             reference_speaker = reference_speaker / reference_speaker.norm(p=2, dim=1, keepdim=True)
 
         for idx, decoder_layer in enumerate(self.layers):
@@ -1769,7 +1770,7 @@ class ParlerTTSModel(ParlerTTSPreTrainedModel):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         
-        # import ipdb; ipdb.set_trace()
+        # import ; .set_trace()
         # decoder outputs consists of (dec_features, past_key_value, dec_hidden, dec_attn)
         decoder_outputs = self.decoder(
             input_ids=input_ids,
@@ -1895,7 +1896,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         hidden_states = outputs[0]
 
         lm_logits = torch.stack([head(hidden_states) for head in self.lm_heads], dim=1)
-
+        import ipdb; ipdb.set_trace()
         loss = None
         # also add speaker similarity CosineEmbeddingLoss
         # compare the output hidden states with the reference speaker embedding and compute similarity and loss using CosineEmbeddingLoss
@@ -3165,7 +3166,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
         encoder_kwargs[model_input_name] = input_values
         audio_encoder_outputs = encoder.encode(**encoder_kwargs)
-        import ipdb; ipdb.set_trace()
+        # import ; .set_trace()
         audio_codes = audio_encoder_outputs.audio_codes
         audio_scales = audio_encoder_outputs.audio_scales
 
@@ -3354,7 +3355,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         self.speaker_encoder = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base')
         self.speaker_encoder.eval()
         input_values = self.speaker_audio_processor(audio, sampling_rate=16000, return_tensors='pt').input_values
-        import ipdb; ipdb.set_trace();
+        # import ; .set_trace();
         with torch.no_grad():
             outputs = self.speaker_encoder(input_values)
             hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
@@ -3363,7 +3364,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         #embedding = embedding.squeeze().cpu().numpy()
         # Normalize
         #embedding = embedding / np.linalg.norm(embedding)
-        import ipdb; ipdb.set_trace();
+        # import ; .set_trace();
         return hidden_states,embedding
     
 
@@ -3377,7 +3378,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         tokenizer = s3tokenizer.load_model("speech_tokenizer_v1_25hz").cuda() 
         mels = []
 
-        import ipdb; ipdb.set_trace()
+        # import ; .set_trace()
         wav_paths = [f_path]
         start_time = time.time()
         for wav_path in wav_paths:
@@ -3401,7 +3402,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         hidden_states = hidden_states.to(speech_token_repeat.device)
         concatenated_tensor = torch.cat((hidden_states, speech_token_repeat), dim=1)
 
-        print(concatenated_tensor.shape)
+        # print(concatenated_tensor.shape)
 
         return concatenated_tensor, speaker_embedding
 
@@ -3414,7 +3415,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
     #     tokenizer = s3tokenizer.load_model("speech_tokenizer_v1_25hz").cuda() 
     #     mels = []
 
-    #     import ipdb; ipdb.set_trace()
+    #     import ; .set_trace()
     #     wav_paths = [f_path]
     #     start_time = time.time()
     #     for wav_path in wav_paths:
@@ -3520,7 +3521,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         generation_config.validate()
         self._validate_model_kwargs(model_kwargs.copy())
         reference_speaker = model_kwargs.get("reference_speaker", None)
-        print(reference_speaker)
+        # print(reference_speaker)
         if model_kwargs.get("encoder_outputs") is not None and type(model_kwargs["encoder_outputs"]) == tuple:
             # wrap the unconditional outputs as a BaseModelOutput for compatibility with the rest of generate
             model_kwargs["encoder_outputs"] = BaseModelOutput(last_hidden_state=model_kwargs["encoder_outputs"][0])
@@ -3566,7 +3567,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
                 model_kwargs,
             )
 
-        # import ipdb; ipdb.set_trace()
+        # import ; .set_trace()
         # If reference speaker file path is passed, create speaker embeddings using DAC
         if reference_speaker is not None:
             model_kwargs['reference_speaker'], model_kwargs['reference_speaker_embeddings'] = self._prepare_speaker_embedding(reference_speaker)
@@ -3685,7 +3686,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         stopping_criteria = self._get_stopping_criteria(
             generation_config=generation_config, stopping_criteria=stopping_criteria
         )
-        # import ipdb; ipdb.set_trace()
+        # import ; .set_trace()
         if is_greedy_gen_mode:
             if generation_config.num_return_sequences > 1:
                 raise ValueError(
@@ -3767,10 +3768,10 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         )
 
         # Add token2wav conversion here from cozyvoice instead of decoding using dac
-        import ipdb; ipdb.set_trace()
-        print("Output Ids")
+        # import ; .set_trace()
+        # print("Output Ids")
         flattened_outputs = output_ids.flatten(start_dim=1)
-        print("flattened outputs {}".format(flattened_outputs))
+        # print("flattened outputs {}".format(flattened_outputs))
 
         with open('flattened_output.txt', 'w') as f:
             for value in flattened_outputs[0]:  # Iterate over the first row

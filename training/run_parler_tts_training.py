@@ -231,7 +231,6 @@ def main():
     # assume that the dataset has been saved to `save_to_disk` if the latter is not empty
     dataset_was_precomputed = len(os.listdir(data_args.save_to_disk)) > 0
     if dataset_was_precomputed:
-        import ipdb; ipdb.set_trace()
         with accelerator.local_main_process_first():
             vectorized_datasets = datasets.load_from_disk(data_args.save_to_disk)
     else:
@@ -246,7 +245,6 @@ def main():
             columns_to_keep["description_column_name"] = data_args.description_column_name
 
         if training_args.do_train:
-            import ipdb; ipdb.set_trace()
             raw_datasets["train"] = load_multiple_datasets(
                 accelerator,
                 data_args.train_dataset_name,
@@ -370,7 +368,7 @@ def main():
     logger.debug(str(accelerator.process_index), main_process_only=False, in_order=True)
     test_tensor = torch.tensor([accelerator.process_index], device=accelerator.device)
     gathered_tensor = accelerator.gather(test_tensor)
-    print("gathered_tensor", gathered_tensor)
+    # print("gathered_tensor", gathered_tensor)
     accelerator.wait_for_everyone()
 
     if not dataset_was_precomputed:
@@ -396,9 +394,9 @@ def main():
                     sys.stdout = devnull
                     speaker_encoder.eval()
                     sys.stdout = original_stdout
-                # import ipdb; ipdb.set_trace()
+
                 input_values = speaker_audio_processor(audio.get('array'), sampling_rate=16000, return_tensors='pt').input_values
-                # import ipdb; ipdb.set_trace();
+   
                 with torch.no_grad():
                     outputs = speaker_encoder(input_values)
                     hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
@@ -407,7 +405,6 @@ def main():
                 #embedding = embedding.squeeze().cpu().numpy()
                 # Normalize
                 #embedding = embedding / np.linalg.norm(embedding)
-                # import ipdb; ipdb.set_trace();
                 return hidden_states,embedding
 
         def _get_speech_token_and_speaker_embedding(audio):
@@ -419,8 +416,6 @@ def main():
             # tokenizer = s3tokenizer.load_model("speech_tokenizer_v1_25hz").cuda() 
             tokenizer = s3tokenizer.load_model("speech_tokenizer_v1_25hz")
             mels = []
-
-            # import ipdb; ipdb.set_trace()
             # wav_paths = [f_path]
             start_time = time.time()
             # for wav_path in wav_paths:
@@ -453,14 +448,13 @@ def main():
             hidden_states = hidden_states.to(speech_token_repeat.device)
             concatenated_tensor = torch.cat((hidden_states, speech_token_repeat), dim=1)
 
-            print(concatenated_tensor.shape)
+            # print(concatenated_tensor.shape)
 
             return concatenated_tensor, speaker_embedding
         # Preprocessing the dataset.
         # We need to tokenize the texts.
         def pass_through_processors(description, prompt, reference_speaker):
             batch = {}
-            # import ipdb; ipdb.set_trace()
             batch["input_ids"] = description_tokenizer(description.strip())["input_ids"]
             batch["prompt_input_ids"] = prompt_tokenizer(prompt.strip())["input_ids"]
             batch["reference_speaker"], _ = _get_speech_token_and_speaker_embedding(reference_speaker)
@@ -814,7 +808,6 @@ def main():
         num_training_steps=total_train_steps * accelerator.num_processes,
     )
 
-    # import ipdb; ipdb.set_trace()
     # Instantiate custom data collator
     data_collator = DataCollatorParlerTTSWithPadding(
         prompt_tokenizer=prompt_tokenizer,
@@ -939,7 +932,7 @@ def main():
         accelerator,
         autocast_kwargs,
     ):
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
         if mixed_precision == "fp16":
             # fp16 doesn't work with T5-like models
             with accelerator.autocast(autocast_handler=autocast_kwargs):
@@ -969,6 +962,7 @@ def main():
                 encoder_outputs.last_hidden_state = encoder_hidden_states
                 batch["encoder_outputs"] = encoder_outputs
 
+        # import ipdb; ipdb.set_trace()
         outputs = model(**batch)
         # CE (data) loss
         ce_loss = outputs.loss
