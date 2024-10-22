@@ -1060,7 +1060,14 @@ def main():
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), training_args.max_grad_norm)
+                
+                memory_before = torch.cuda.memory_allocated()
+                memory_cached = torch.cuda.memory_cached()
                 optimizer.step()
+                memory_after = torch.cuda.memory_allocated()
+                print("Memory before {}".format(memory_before))
+                print("Memory cached {}".format(memory_cached))
+                print("Memory after {}".format(memory_after))
                 lr_scheduler.step()
                 optimizer.zero_grad()
 

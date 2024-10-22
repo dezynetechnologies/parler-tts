@@ -1896,14 +1896,96 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         hidden_states = outputs[0]
 
         lm_logits = torch.stack([head(hidden_states) for head in self.lm_heads], dim=1)
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
         loss = None
         # also add speaker similarity CosineEmbeddingLoss
         # compare the output hidden states with the reference speaker embedding and compute similarity and loss using CosineEmbeddingLoss
         cosine_loss = nn.CosineEmbeddingLoss()
+
+        # hidden_seq_len_2 = hidden_states.size(1)
+        # ref_seq_len_2 = reference_speaker.size(1)
+
+        # hidden_seq_len_3 = hidden_states.size(2)
+        # ref_seq_len_3 = reference_speaker.size(2)
+
+        # # Pad the reference_speaker tensor to match the hidden_states tensor size
+        # if ref_seq_len_2 < hidden_seq_len_2 or ref_seq_len_3 < hidden_seq_len_3:
+        #     padding_2 = hidden_seq_len_2 - ref_seq_len_2 if ref_seq_len_2 < hidden_seq_len_2 else 0
+        #     padding_3 = hidden_seq_len_3 - ref_seq_len_3 if ref_seq_len_3 < hidden_seq_len_3 else 0
+        #     padding = (0, padding_3, 0, padding_2)  # Pad third dimension, then second dimension
+        #     reference_speaker = F.pad(reference_speaker, padding)
+
+        # # Pad the hidden_states tensor if needed to match reference_speaker size
+        # if hidden_seq_len_2 < ref_seq_len_2 or hidden_seq_len_3 < ref_seq_len_3:
+        #     padding_2 = ref_seq_len_2 - hidden_seq_len_2 if hidden_seq_len_2 < ref_seq_len_2 else 0
+        #     padding_3 = ref_seq_len_3 - hidden_seq_len_3 if hidden_seq_len_3 < ref_seq_len_3 else 0
+        #     padding = (0, padding_3, 0, padding_2)
+        #     hidden_states = F.pad(hidden_states, padding)
+
+#         hidden_seq_len, hidden_embed_dim = hidden_states.size(1), hidden_states.size(2)
+#         ref_seq_len, ref_embed_dim = reference_speaker.size(2), reference_speaker.size(3)
+
+# # Match sequence length and embedding dimension (resize reference_speaker to match hidden_states)
+#         if hidden_seq_len != ref_seq_len or hidden_embed_dim != ref_embed_dim:
+#             # Adding a channel dimension to hidden_states: Shape (batch_size, 1, seq_length, embedding_dim)
+#             hidden_states = hidden_states.unsqueeze(1)
+            
+#             # Interpolating the reference_speaker tensor to match hidden_states
+#             reference_speaker_resized = F.interpolate(reference_speaker, size=(hidden_seq_len, hidden_embed_dim), mode='nearest')
+            
+#             # Removing the extra channel dimension from hidden_states
+#             hidden_states_resized = hidden_states.squeeze(1)
+
+#         # Now flatten them for cosine similarity computation
+#         hidden_states_flat = hidden_states_resized.view(hidden_states_resized.size(0), -1)
+#         reference_speaker_flat = reference_speaker_resized.view(reference_speaker_resized.size(0), -1)
+
+        hidden_seq_len, hidden_embed_dim = hidden_states.size(1), hidden_states.size(2)
+        ref_seq_len, ref_embed_dim = reference_speaker.size(2), reference_speaker.size(3)
+
+# Ensure both tensors have the same sequence length
+        if hidden_seq_len != ref_seq_len:
+            # Unsqueeze to add a "channel" dimension and make both tensors 4D
+            hidden_states_resize = hidden_states.unsqueeze(1)  # Shape: (batch_size, 1, seq_length, embedding_dim)
+            # reference_speaker = reference_speaker.unsqueeze(1)  # Shape already has 1 as second dimension
+
+            # Interpolate reference_speaker to match hidden_states' sequence length
+            reference_speaker_resized = F.interpolate(reference_speaker, size=(hidden_seq_len, ref_embed_dim), mode='nearest')
+            
+    # Squeeze the channel dimension back out
+            reference_speaker_resized = reference_speaker_resized.squeeze(1)
+            hidden_states_resize = hidden_states_resize.squeeze(1)
+
+# Now match the embedding dimensions using padding if required
+        if hidden_embed_dim != ref_embed_dim:
+            hidden_states_resize = hidden_states
+            if ref_embed_dim < hidden_embed_dim:
+                # Pad reference_speaker to match hidden_states' embedding dimension
+                padding = (0, hidden_embed_dim - ref_embed_dim)
+                reference_speaker_resized = F.pad(reference_speaker_resized, padding)
+            elif hidden_embed_dim < ref_embed_dim:
+                # Pad hidden_states to match reference_speaker's embedding dimension
+                padding = (0, ref_embed_dim - hidden_embed_dim)
+                hidden_states_resize = F.pad(hidden_states, padding)
         # using torch.ones to maximise cosine similarity instead of -1
-        cosine_output = cosine_loss(hidden_states, reference_speaker, torch.ones(hidden_states.shape[0], device=hidden_states.device))
-        cosine_output.backward()
+        hidden_states_flat = hidden_states.view(hidden_states.size(0), -1)
+        reference_speaker_flat = reference_speaker_resized.view(reference_speaker.size(0), -1)
+
+        # hidden_state_len = hidden_states_flat.size(1)
+        # reference_speaker_len = reference_speaker_flat.size(1)
+
+        # if reference_speaker_len < hidden_state_len:
+        #     padding = (0, 0, 0, hidden_state_len - reference_speaker_len)
+        #     reference_speaker_flat = torch.nn.functional.pad(reference_speaker_flat, padding)
+        # elif reference_speaker_len > hidden_state_len:
+        #     padding = (0, 0, 0, reference_speaker_len - hidden_state_len)
+        #     hidden_states_flat = torch.nn.functional.pad(hidden_states_flat, padding)
+
+
+        # cosine_output = cosine_loss(hidden_states, reference_speaker, torch.ones(hidden_states.shape[0], device=hidden_states.device))
+        cosine_output = cosine_loss(hidden_states_flat, reference_speaker_flat, torch.ones(hidden_states.shape[0], device=hidden_states.device))
+        # retain information about cosine loss and variables for backward pass as this is computed prior to codebook CE loss
+        cosine_output.backward(retain_graph=True)
         if labels is not None:
             # since encoder hidden states have concatenated to hidden states, take the last hidden states corresponding to labels
             logits = lm_logits[:, :, -labels.shape[1] :]
