@@ -407,6 +407,7 @@ def main():
                 #embedding = embedding / np.linalg.norm(embedding)
                 return hidden_states,embedding
 
+
         def _get_speech_token_and_speaker_embedding(audio):
             hidden_states, speaker_embedding = extract_speaker_encoder_hidden_state(audio)
             # from . import s3tokenizer
@@ -457,7 +458,10 @@ def main():
             batch = {}
             batch["input_ids"] = description_tokenizer(description.strip())["input_ids"]
             batch["prompt_input_ids"] = prompt_tokenizer(prompt.strip())["input_ids"]
-            batch["reference_speaker"], _ = _get_speech_token_and_speaker_embedding(reference_speaker)
+            # batch["reference_speaker"], _ = _get_speech_token_and_speaker_embedding(reference_speaker)
+            
+            # change to only pass hidden state of speaker embedding encoder
+            batch["reference_speaker"], _ = extract_speaker_encoder_hidden_state(reference_speaker)
             return batch
 
         with accelerator.local_main_process_first():

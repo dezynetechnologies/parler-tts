@@ -97,10 +97,10 @@ class DataCollatorParlerTTSWithPadding:
         reference_speaker_tensors = [torch.tensor(speaker) for speaker in reference_speaker_data]
 
         # as reference tensors can be of different length, pad it based on the max tensor size
-        reference_speaker_max_length = max([speaker.size(1) for speaker in reference_speaker_tensors])
+        # just removed # reference_speaker_max_length = max([speaker.size(1) for speaker in reference_speaker_tensors])
         # print("Max second dim for speaker {}".format(reference_speaker_max_length))
-        padded_reference_speaker_tensors = [torch.nn.functional.pad(speaker, (0, 0, 0, reference_speaker_max_length - speaker.size(1))) for speaker in reference_speaker_tensors]
-        reference_speaker_stacked_tensors = torch.stack(padded_reference_speaker_tensors)
+        # just removed # padded_reference_speaker_tensors = [torch.nn.functional.pad(speaker, (0, 0, 0, reference_speaker_max_length - speaker.size(1))) for speaker in reference_speaker_tensors]
+        # just removed # reference_speaker_stacked_tensors = torch.stack(padded_reference_speaker_tensors)
         # print("Ref Speaker is {}".format(reference_speaker))
         # import ipdb; ipdb.set_trace()
         # print("Ref Speaker is {}".format(reference_speaker))
@@ -134,7 +134,9 @@ class DataCollatorParlerTTSWithPadding:
 
         batch["prompt_input_ids"] = prompt_input_ids["input_ids"]
         # batch["reference_speaker"] = reference_speaker
-        batch["reference_speaker"] = reference_speaker_stacked_tensors
+        # just removed # batch["reference_speaker"] = reference_speaker_stacked_tensors
+        batch["reference_speaker"] = reference_speaker_tensors
+        
         if "attention_mask" in prompt_input_ids:
             batch["prompt_attention_mask"] = prompt_input_ids["attention_mask"]
 

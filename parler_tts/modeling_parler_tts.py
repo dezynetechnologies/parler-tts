@@ -768,6 +768,8 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
             else:
                 past_key_value = past_key_value.self_attention_cache
 
+        # NOTE : this could be an issue here as when reference_speaker hidden states are past we're just using that in cross attention 
+        #        and disregarding the current hidden states
         # use key_value_states if cross attention
         if reference_speaker is not None:
             current_states = reference_speaker
@@ -786,6 +788,8 @@ class ParlerTTSSdpaAttention(ParlerTTSAttention):
             key_states = self._shape_key_value(self.k_proj(current_states), -1, bsz)
             value_states = self._shape_key_value(self.v_proj(current_states), -1, bsz)
 
+            # NOTE : this could be an issue here, i think we should apply rope embeddings anyways to key_states even if reference speaker is passed
+            #        but that can be only done if we update the logic of current_states to not be equal to reference embedding but rather use concatenation etc
             if not is_cross_attention and self.rope_embeddings and reference_speaker is None:   
                 # cached key states already have rope applied - only apply to new state
                 key_states = apply_rotary_pos_emb(key_states, cos, sin)
@@ -1900,7 +1904,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
         loss = None
         # also add speaker similarity CosineEmbeddingLoss
         # compare the output hidden states with the reference speaker embedding and compute similarity and loss using CosineEmbeddingLoss
-        cosine_loss = nn.CosineEmbeddingLoss()
+        # cosine_loss = nn.CosineEmbeddingLoss()
 
         # hidden_seq_len_2 = hidden_states.size(1)
         # ref_seq_len_2 = reference_speaker.size(1)
@@ -1940,36 +1944,41 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
 #         hidden_states_flat = hidden_states_resized.view(hidden_states_resized.size(0), -1)
 #         reference_speaker_flat = reference_speaker_resized.view(reference_speaker_resized.size(0), -1)
 
-        hidden_seq_len, hidden_embed_dim = hidden_states.size(1), hidden_states.size(2)
-        ref_seq_len, ref_embed_dim = reference_speaker.size(2), reference_speaker.size(3)
+        # import ipdb; ipdb.set_trace()
+        # EDIT: The changes below are just removed as given we only have speaker embeddings now, we might have to update the logic with upated shape and size
+        # EDIT : Now cosine embedding loss should instead be computed for speaker verification hidden states (reference_speaker) and output hidden states
+        # EDIT : Cosine embedding loss can also be computed against speaker verification embeddings and speaker embeddings extracted from output hidden states
 
-# Ensure both tensors have the same sequence length
-        if hidden_seq_len != ref_seq_len:
-            # Unsqueeze to add a "channel" dimension and make both tensors 4D
-            hidden_states_resize = hidden_states.unsqueeze(1)  # Shape: (batch_size, 1, seq_length, embedding_dim)
-            # reference_speaker = reference_speaker.unsqueeze(1)  # Shape already has 1 as second dimension
+#         hidden_seq_len, hidden_embed_dim = hidden_states.size(1), hidden_states.size(2)
+#         ref_seq_len, ref_embed_dim = reference_speaker.size(2), reference_speaker.size(3)
 
-            # Interpolate reference_speaker to match hidden_states' sequence length
-            reference_speaker_resized = F.interpolate(reference_speaker, size=(hidden_seq_len, ref_embed_dim), mode='nearest')
+# # Ensure both tensors have the same sequence length
+#         if hidden_seq_len != ref_seq_len:
+#             # Unsqueeze to add a "channel" dimension and make both tensors 4D
+#             hidden_states_resize = hidden_states.unsqueeze(1)  # Shape: (batch_size, 1, seq_length, embedding_dim)
+#             # reference_speaker = reference_speaker.unsqueeze(1)  # Shape already has 1 as second dimension
+
+#             # Interpolate reference_speaker to match hidden_states' sequence length
+#             reference_speaker_resized = F.interpolate(reference_speaker, size=(hidden_seq_len, ref_embed_dim), mode='nearest')
             
-    # Squeeze the channel dimension back out
-            reference_speaker_resized = reference_speaker_resized.squeeze(1)
-            hidden_states_resize = hidden_states_resize.squeeze(1)
+#     # Squeeze the channel dimension back out
+#             reference_speaker_resized = reference_speaker_resized.squeeze(1)
+#             hidden_states_resize = hidden_states_resize.squeeze(1)
 
-# Now match the embedding dimensions using padding if required
-        if hidden_embed_dim != ref_embed_dim:
-            hidden_states_resize = hidden_states
-            if ref_embed_dim < hidden_embed_dim:
-                # Pad reference_speaker to match hidden_states' embedding dimension
-                padding = (0, hidden_embed_dim - ref_embed_dim)
-                reference_speaker_resized = F.pad(reference_speaker_resized, padding)
-            elif hidden_embed_dim < ref_embed_dim:
-                # Pad hidden_states to match reference_speaker's embedding dimension
-                padding = (0, ref_embed_dim - hidden_embed_dim)
-                hidden_states_resize = F.pad(hidden_states, padding)
-        # using torch.ones to maximise cosine similarity instead of -1
-        hidden_states_flat = hidden_states.view(hidden_states.size(0), -1)
-        reference_speaker_flat = reference_speaker_resized.view(reference_speaker.size(0), -1)
+# # Now match the embedding dimensions using padding if required
+#         if hidden_embed_dim != ref_embed_dim:
+#             hidden_states_resize = hidden_states
+#             if ref_embed_dim < hidden_embed_dim:
+#                 # Pad reference_speaker to match hidden_states' embedding dimension
+#                 padding = (0, hidden_embed_dim - ref_embed_dim)
+#                 reference_speaker_resized = F.pad(reference_speaker_resized, padding)
+#             elif hidden_embed_dim < ref_embed_dim:
+#                 # Pad hidden_states to match reference_speaker's embedding dimension
+#                 padding = (0, ref_embed_dim - hidden_embed_dim)
+#                 hidden_states_resize = F.pad(hidden_states, padding)
+#         # using torch.ones to maximise cosine similarity instead of -1
+#         hidden_states_flat = hidden_states.view(hidden_states.size(0), -1)
+#         reference_speaker_flat = reference_speaker_resized.view(reference_speaker.size(0), -1)
 
         # hidden_state_len = hidden_states_flat.size(1)
         # reference_speaker_len = reference_speaker_flat.size(1)
@@ -1983,9 +1992,14 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
 
 
         # cosine_output = cosine_loss(hidden_states, reference_speaker, torch.ones(hidden_states.shape[0], device=hidden_states.device))
-        cosine_output = cosine_loss(hidden_states_flat, reference_speaker_flat, torch.ones(hidden_states.shape[0], device=hidden_states.device))
+        # wav2vec_processor = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base')
+        # wav2vec_model = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base')
+
+        # input_values = wav2vec_processor(hidden_states, sampling_rate=16000, return_tensors='pt').input_values
+        
+        # cosine_output = cosine_loss(hidden_states_flat, reference_speaker_flat, torch.ones(hidden_states.shape[0], device=hidden_states.device))
         # retain information about cosine loss and variables for backward pass as this is computed prior to codebook CE loss
-        cosine_output.backward(retain_graph=True)
+        # cosine_output.backward(retain_graph=True)
         if labels is not None:
             # since encoder hidden states have concatenated to hidden states, take the last hidden states corresponding to labels
             logits = lm_logits[:, :, -labels.shape[1] :]
@@ -2009,7 +2023,7 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
                 loss += codebook_loss
 
             loss = loss / self.config.num_codebooks
-            loss += cosine_output
+            # loss += cosine_output
 
         # (bsz, num_codebooks, seq_len, vocab_size) -> (bsz * num_codebooks, seq_len, vocab_size)
         lm_logits = lm_logits.reshape(-1, *lm_logits.shape[2:])
@@ -3518,7 +3532,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # return self.extract_speaker_encoder_hidden_state(audio)
 
         # recent change
-        return self._get_speech_token_and_speaker_embedding(audio, f_path)
+        # just removed # return self._get_speech_token_and_speaker_embedding(audio, f_path)
+        return self.extract_speaker_encoder_hidden_state(audio)
 
     @torch.no_grad()
     def generate(
