@@ -6,8 +6,12 @@ import soundfile as sf
 
 device = "cuda:0" if torch.cuda.is_available() else "cpu"
 
-model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler-tts-mini-v1").to(device)
-tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler-tts-mini-v1")
+# model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler-tts-mini-v1").to(device)
+# tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler-tts-mini-v1")
+
+
+model = ParlerTTSForConditionalGeneration.from_pretrained("kaushalgawri/parler-tts-mini-with-cloning-and-emotion").to(device)
+tokenizer = AutoTokenizer.from_pretrained("kaushalgawri/parler-tts-mini-with-cloning-and-emotion")
 
 #model = ParlerTTSForConditionalGeneration.from_pretrained("parler-tts/parler-tts-large-v1").to(device)
 #tokenizer = AutoTokenizer.from_pretrained("parler-tts/parler-tts-large-v1")
@@ -71,11 +75,15 @@ for module_name, module in model.named_modules():
     _init_weights_cross_attention(module, module_name)
 
 prompt = "Hey, how are you doing today? I hope you're having a great day!"
-description = "Jon's voice is monotone yet slightly fast in delivery, with a very close recording that almost has no background noise."
+# description = "Jon's voice is monotone yet slightly fast in delivery, with a very close recording that almost has no background noise."
+description = "	A man delivers his words fearfully, with a very distant-sounding quality and some background noise present. His voice is very low-pitched and monotone, and he speaks very slowly."
 
 input_ids = tokenizer(description, return_tensors="pt").input_ids.to(device)
 prompt_input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(device)
 
-generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids, reference_speaker = 'dheeraj_55s.mp3')
+# generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids, reference_speaker = 'dheeraj_55s.mp3')
+
+# import ipdb; ipdb.set_trace();
+generation = model.generate(input_ids=input_ids, prompt_input_ids=prompt_input_ids)
 audio_arr = generation.cpu().numpy().squeeze()
-sf.write("parler_tts_out_partial_with_speech_token_24_layers_scaling_1x.wav", audio_arr, model.config.sampling_rate)
+sf.write("parler_tts_out_custom_trained.wav", audio_arr, model.config.sampling_rate)

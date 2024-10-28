@@ -7,7 +7,6 @@
     "description_tokenizer_name":"google/flan-t5-large",
     "prompt_tokenizer_name":"google/flan-t5-large",
 
-    "overwrite_output_dir": true,
     "output_dir": "./output_dir_training",
 
     "train_dataset_name": "kaushalgawri/emotion_dataset_for_tts_with_transcriptions_v3",
@@ -33,8 +32,6 @@
     "group_by_length": true,
 
     "preprocessing_num_workers": 8,
-
-    "do_train": true,
     "num_train_epochs": 4,
     "gradient_accumulation_steps": 4,
     "gradient_checkpointing": false,
@@ -51,7 +48,7 @@
     "logging_steps": 1000,
     "freeze_text_encoder": true,
 
-
+    "do_train": true,
     "do_eval": true, 
     "predict_with_generate": true,
     "include_inputs_for_metrics": true,
@@ -59,12 +56,13 @@
     "eval_steps": 10000,
     "save_steps": 10000,
 
-    "per_device_eval_batch_size": 4,
+    "per_device_eval_batch_size": 1,
 
     "audio_encoder_per_device_batch_size":24,
     "dtype": "bfloat16",
     "seed": 456,
 
     "dataloader_num_workers":8,
-    "attn_implementation": "sdpa"
+    "attn_implementation": "sdpa",
+    "report_to": ["wandb"]
 }

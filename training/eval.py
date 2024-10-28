@@ -1,7 +1,7 @@
 import torch
 from torchaudio.pipelines import SQUIM_OBJECTIVE
 import torchaudio
-#import evaluate
+import evaluate
 from transformers import (
     AutoModel,
     AutoProcessor,

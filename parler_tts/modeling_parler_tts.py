@@ -59,6 +59,7 @@ from transformers.utils.import_utils import is_flash_attn_2_available, is_flash_
 
 from .configuration_parler_tts import ParlerTTSConfig, ParlerTTSDecoderConfig
 from .dac_wrapper import DACConfig, DACModel
+from . import s3tokenizer
 
 from transformers import AutoFeatureExtractor
 import torchaudio
@@ -67,7 +68,8 @@ import torch
 from transformers import Wav2Vec2Processor, Wav2Vec2Model
 import librosa
 from scipy.spatial.distance import cosine
-
+import os
+import sys
 
 AutoConfig.register("dac", DACConfig)
 AutoModel.register(DACConfig, DACModel)
@@ -1940,36 +1942,40 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
 #         hidden_states_flat = hidden_states_resized.view(hidden_states_resized.size(0), -1)
 #         reference_speaker_flat = reference_speaker_resized.view(reference_speaker_resized.size(0), -1)
 
-        hidden_seq_len, hidden_embed_dim = hidden_states.size(1), hidden_states.size(2)
-        ref_seq_len, ref_embed_dim = reference_speaker.size(2), reference_speaker.size(3)
+        if reference_speaker is not None:
+            # import ipdb; ipdb.set_trace();
+            if reference_speaker.dim() < 4:
+                reference_speaker = reference_speaker.unsqueeze(0) # add extra dimension to make it compatible
+            hidden_seq_len, hidden_embed_dim = hidden_states.size(1), hidden_states.size(2)
+            ref_seq_len, ref_embed_dim = reference_speaker.size(2), reference_speaker.size(3)
 
-# Ensure both tensors have the same sequence length
-        if hidden_seq_len != ref_seq_len:
-            # Unsqueeze to add a "channel" dimension and make both tensors 4D
-            hidden_states_resize = hidden_states.unsqueeze(1)  # Shape: (batch_size, 1, seq_length, embedding_dim)
-            # reference_speaker = reference_speaker.unsqueeze(1)  # Shape already has 1 as second dimension
+    # Ensure both tensors have the same sequence length
+            if hidden_seq_len != ref_seq_len:
+                # Unsqueeze to add a "channel" dimension and make both tensors 4D
+                hidden_states_resize = hidden_states.unsqueeze(1)  # Shape: (batch_size, 1, seq_length, embedding_dim)
+                # reference_speaker = reference_speaker.unsqueeze(1)  # Shape already has 1 as second dimension
 
-            # Interpolate reference_speaker to match hidden_states' sequence length
-            reference_speaker_resized = F.interpolate(reference_speaker, size=(hidden_seq_len, ref_embed_dim), mode='nearest')
-            
-    # Squeeze the channel dimension back out
-            reference_speaker_resized = reference_speaker_resized.squeeze(1)
-            hidden_states_resize = hidden_states_resize.squeeze(1)
+                # Interpolate reference_speaker to match hidden_states' sequence length
+                reference_speaker_resized = F.interpolate(reference_speaker, size=(hidden_seq_len, ref_embed_dim), mode='nearest')
+                
+        # Squeeze the channel dimension back out
+                reference_speaker_resized = reference_speaker_resized.squeeze(1)
+                hidden_states_resize = hidden_states_resize.squeeze(1)
 
-# Now match the embedding dimensions using padding if required
-        if hidden_embed_dim != ref_embed_dim:
-            hidden_states_resize = hidden_states
-            if ref_embed_dim < hidden_embed_dim:
-                # Pad reference_speaker to match hidden_states' embedding dimension
-                padding = (0, hidden_embed_dim - ref_embed_dim)
-                reference_speaker_resized = F.pad(reference_speaker_resized, padding)
-            elif hidden_embed_dim < ref_embed_dim:
-                # Pad hidden_states to match reference_speaker's embedding dimension
-                padding = (0, ref_embed_dim - hidden_embed_dim)
-                hidden_states_resize = F.pad(hidden_states, padding)
+    # Now match the embedding dimensions using padding if required
+            if hidden_embed_dim != ref_embed_dim:
+                hidden_states_resize = hidden_states
+                if ref_embed_dim < hidden_embed_dim:
+                    # Pad reference_speaker to match hidden_states' embedding dimension
+                    padding = (0, hidden_embed_dim - ref_embed_dim)
+                    reference_speaker_resized = F.pad(reference_speaker_resized, padding)
+                elif hidden_embed_dim < ref_embed_dim:
+                    # Pad hidden_states to match reference_speaker's embedding dimension
+                    padding = (0, ref_embed_dim - hidden_embed_dim)
+                    hidden_states_resize = F.pad(hidden_states, padding)
         # using torch.ones to maximise cosine similarity instead of -1
-        hidden_states_flat = hidden_states.view(hidden_states.size(0), -1)
-        reference_speaker_flat = reference_speaker_resized.view(reference_speaker.size(0), -1)
+            hidden_states_flat = hidden_states.view(hidden_states.size(0), -1)
+            reference_speaker_flat = reference_speaker_resized.view(reference_speaker.size(0), -1)
 
         # hidden_state_len = hidden_states_flat.size(1)
         # reference_speaker_len = reference_speaker_flat.size(1)
@@ -1983,9 +1989,9 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
 
 
         # cosine_output = cosine_loss(hidden_states, reference_speaker, torch.ones(hidden_states.shape[0], device=hidden_states.device))
-        cosine_output = cosine_loss(hidden_states_flat, reference_speaker_flat, torch.ones(hidden_states.shape[0], device=hidden_states.device))
+        # cosine_output = cosine_loss(hidden_states_flat, reference_speaker_flat, torch.ones(hidden_states.shape[0], device=hidden_states.device))
         # retain information about cosine loss and variables for backward pass as this is computed prior to codebook CE loss
-        cosine_output.backward(retain_graph=True)
+        # cosine_output.backward(retain_graph=True)
         if labels is not None:
             # since encoder hidden states have concatenated to hidden states, take the last hidden states corresponding to labels
             logits = lm_logits[:, :, -labels.shape[1] :]
@@ -2009,7 +2015,14 @@ class ParlerTTSForCausalLM(ParlerTTSPreTrainedModel):
                 loss += codebook_loss
 
             loss = loss / self.config.num_codebooks
-            loss += cosine_output
+
+            if reference_speaker is not None:
+                cosine_output = cosine_loss(hidden_states_flat, reference_speaker_flat, torch.ones(hidden_states.shape[0], device=hidden_states.device))
+        # retain information about cosine loss and variables for backward pass as this is computed prior to codebook CE loss
+                loss += cosine_output
+            # not required for eval mode
+            # cosine_output.backward()
+            
 
         # (bsz, num_codebooks, seq_len, vocab_size) -> (bsz * num_codebooks, seq_len, vocab_size)
         lm_logits = lm_logits.reshape(-1, *lm_logits.shape[2:])
@@ -3485,7 +3498,7 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         concatenated_tensor = torch.cat((hidden_states, speech_token_repeat), dim=1)
 
         # print(concatenated_tensor.shape)
-
+        # import ipdb; ipdb.set_trace();
         return concatenated_tensor, speaker_embedding
 
     # def _get_speech_token_and_speaker_embedding_via_projection(self, audio, f_path):
@@ -3508,7 +3521,102 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
     #     speech_token_pooled = torch.mean(speech_token, dim=1).unsqueeze(1).expand(-1, 2768, -1)
 
+    def _get_speech_token_and_speaker_embedding_v2(self, audio):
+            hidden_states, speaker_embedding = self.extract_speaker_encoder_hidden_state_v2(audio)
+            # from . import s3tokenizer
+            # import s3tokenizer
+            import time
+            # tokenizer = s3tokenizer.load_model("speech_tokenizer_v1").cuda()  # or "speech_tokenizer_v1_25hz"
+            # tokenizer = s3tokenizer.load_model("speech_tokenizer_v1_25hz").cuda() 
+            tokenizer = s3tokenizer.load_model("speech_tokenizer_v1_25hz")
+            mels = []
+            # wav_paths = [f_path]
+            start_time = time.time()
+            # for wav_path in wav_paths:
+            #     audio = s3tokenizer.load_audio(wav_path)
+            #     mels.append(s3tokenizer.log_mel_spectrogram(audio))
 
+            # audio = audio.get('array')
+            # for wav in audio:
+            # ref_audio = s3tokenizer.load_audio(audio)
+            # ref_audio = s3tokenizer.process_audio(audio)
+            ref_audio = self.convert_to_2d_tensor(audio)
+            ref_audio = ref_audio.squeeze(0)
+            # import ipdb; ipdb.set_trace()
+            mels.append(s3tokenizer.log_mel_spectrogram(ref_audio))
+            # ref_audio = s3tokenizer.load_audio(audio)
+            mels, mels_lens = s3tokenizer.padding(mels)
+            update_mels_len = mels_lens.to(mels.device)
+            speech_token, speech_token_len = tokenizer.quantize(mels.cpu(), mels_lens.cpu())
+            # speech_token, speech_token_len = tokenizer.quantize(mels, update_mels_len)
+
+            # print(f"Time: {time.time() - start_time}")
+            # for i in range(len(wav_paths)):
+            #     print(codes[i, :codes_lens[i].item()])
+            #     print(codes.shape)
+            # return speech_token, speech_token_len
+
+            speech_token = speech_token.unsqueeze(2)
+            speech_token_repeat = speech_token.repeat(1, 1, 768)
+
+            # padding = (0, hidden_states.size(1) - speech_token_repeat.size(1))
+
+            # speech_token_padded = torch.nn.functional.pad(speech_token_repeat, padding)
+            hidden_states = hidden_states.to(speech_token_repeat.device)
+            concatenated_tensor = torch.cat((hidden_states, speech_token_repeat), dim=1)
+
+            # print(concatenated_tensor.shape)
+
+            return concatenated_tensor, speaker_embedding
+
+
+    def convert_to_2d_tensor(self, input):
+        
+        
+        # if input.dim() == 2:
+        # # If 2D, add a batch dimension (N=1, C=channels, L=length)
+        #     input = input.unsqueeze(0)  # Now shape is [1, C, L]
+        if input.dim() == 1:
+        # If 1D, make it [1, 1, L] (1 batch, 1 channel)
+            input = input.unsqueeze(0) # Now shape is [1, 1, L]
+        elif input.dim() > 2:
+            # If more than 3D, reshape or flatten accordingly
+            # Example: if tensor is [N, C, D1, D2], we can flatten D1 and D2
+            shape = input.size()
+            input = input.view(shape[0], -1)  # Reshape to [N, C, L]
+    
+        return input
+        
+    def extract_speaker_encoder_hidden_state_v2(self, audio):
+        # Step 1: Load Pre-trained Wav2Vec 2.0 Model and Processor
+                hidden_states = None
+
+                speaker_audio_processor = Wav2Vec2Processor.from_pretrained('facebook/wav2vec2-base')
+                speaker_encoder = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base')
+                # to supress the eval output on a new output window
+                with open(os.devnull, 'w') as devnull:
+                    original_stdout = sys.stdout
+                    sys.stdout = devnull
+                    speaker_encoder.eval()
+                    sys.stdout = original_stdout
+
+                # input_values = speaker_audio_processor(audio.get('array'), sampling_rate=16000, return_tensors='pt').input_values
+                input_values = speaker_audio_processor(audio, sampling_rate=16000, return_tensors='pt').input_values
+                # import ipdb; ipdb.set_trace();
+                input_values = self.convert_to_2d_tensor(input_values)
+                with torch.no_grad():
+                    outputs = speaker_encoder(input_values)
+                    hidden_states = outputs.last_hidden_state  # [batch_size, seq_len, hidden_size]
+                # Mean pooling
+                embedding = torch.mean(hidden_states, dim=1)  # [batch_size, hidden_size]
+                #embedding = embedding.squeeze().cpu().numpy()
+                # Normalize
+                #embedding = embedding / np.linalg.norm(embedding)
+                return hidden_states,embedding
+
+    def _prepare_speaker_embedding_v2(self, audio):
+
+        return self._get_speech_token_and_speaker_embedding_v2(audio)
 
     def _prepare_speaker_embedding(self, f_path):
         # Load and preprocess audio
@@ -3652,7 +3760,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         # import ; .set_trace()
         # If reference speaker file path is passed, create speaker embeddings using DAC
         if reference_speaker is not None:
-            model_kwargs['reference_speaker'], model_kwargs['reference_speaker_embeddings'] = self._prepare_speaker_embedding(reference_speaker)
+            # model_kwargs['reference_speaker'], model_kwargs['reference_speaker_embeddings'] = self._prepare_speaker_embedding(reference_speaker)
+            model_kwargs['reference_speaker'], model_kwargs['reference_speaker_embeddings'] = self._prepare_speaker_embedding_v2(reference_speaker)
 
         # 5. Prepare `input_ids` which will be used for auto-regressive generation
         input_ids, model_kwargs = self._prepare_decoder_input_ids_for_generation(

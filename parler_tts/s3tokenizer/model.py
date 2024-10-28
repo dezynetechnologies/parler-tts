@@ -56,8 +56,16 @@ class Conv1d(nn.Conv1d):
     def _conv_forward(
         self, x: Tensor, weight: Tensor, bias: Optional[Tensor]
     ) -> Tensor:
+        # import ipdb; ipdb.set_trace()
+        updated_weight = weight.to(x.device)
+        if bias is not None:
+            updated_bias = bias.to(x.device)
+            updated_bias = updated_bias.to(x.dtype)
+        else:
+            updated_bias = None
+
         return super()._conv_forward(
-            x, weight.to(x.dtype), None if bias is None else bias.to(x.dtype)
+            x, updated_weight.to(x.dtype), updated_bias
         )
 
 
@@ -127,6 +135,7 @@ class ResidualAttentionBlock(nn.Module):
         x: Tensor,
         mask: Optional[Tensor] = None,
     ):
+        # import ipdb; ipdb.set_trace();
         x = x + self.attn(self.attn_ln(x), mask=mask)[0]
         x = x + self.mlp(self.mlp_ln(x))
         return x
@@ -164,7 +173,8 @@ class AudioEncoder(nn.Module):
             mask = mask[:, :, (_T + 1) % 2::2]  # (B, 1, T // 4)
         mask = mask_to_bias(mask, x.dtype)
 
-        x = (x + self.positional_embedding[:x.shape[1], :]).to(x.dtype)
+        positional_embedding = self.positional_embedding.to(x.device)
+        x = (x + positional_embedding[:x.shape[1], :]).to(x.dtype)
 
         for block in self.blocks:
             x = block(x, mask.unsqueeze(1))
@@ -198,6 +208,7 @@ class EuclideanCodebook(nn.Module):
 
     @torch.inference_mode()
     def quantize(self, x: Tensor) -> Tensor:
+        # import ipdb; ipdb.set_trace();
         embed = self.embed.t()
         dist = -(x.pow(2).sum(1, keepdim=True) - 2 * x @ embed +
                  embed.pow(2).sum(0, keepdim=True))
@@ -295,6 +306,7 @@ class S3Tokenizer(nn.Module):
     def quantize(
         self, mel: Tensor, mel_len: Tensor
     ) -> Tuple[Tensor, Tensor]:
+        # import ipdb; ipdb.set_trace();
         hidden, code_len = self.encoder(mel, mel_len)
         code = self.quantizer.encode(hidden)
         return code, code_len
