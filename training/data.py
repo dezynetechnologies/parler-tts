@@ -135,8 +135,8 @@ class DataCollatorParlerTTSWithPadding:
         batch["prompt_input_ids"] = prompt_input_ids["input_ids"]
         # batch["reference_speaker"] = reference_speaker
         # just removed # batch["reference_speaker"] = reference_speaker_stacked_tensors
-        batch["reference_speaker"] = reference_speaker_tensors
-        
+        batch["reference_speaker"] = torch.stack(reference_speaker_tensors)
+
         if "attention_mask" in prompt_input_ids:
             batch["prompt_attention_mask"] = prompt_input_ids["attention_mask"]
 

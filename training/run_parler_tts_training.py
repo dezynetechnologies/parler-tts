@@ -459,7 +459,7 @@ def main():
             batch["input_ids"] = description_tokenizer(description.strip())["input_ids"]
             batch["prompt_input_ids"] = prompt_tokenizer(prompt.strip())["input_ids"]
             # batch["reference_speaker"], _ = _get_speech_token_and_speaker_embedding(reference_speaker)
-            
+
             # change to only pass hidden state of speaker embedding encoder
             batch["reference_speaker"], _ = extract_speaker_encoder_hidden_state(reference_speaker)
             return batch
@@ -1051,23 +1051,23 @@ def main():
         if hasattr(train_dataloader, "dataset") and isinstance(train_dataloader.dataset, IterableDataset):
             train_dataloader.dataset.set_epoch(epoch)
 
-        if resume_step is not None:
-            # Skip the first N batches in the dataloader when resuming from a checkpoint
-            logger.info(f"  Skip first {resume_step} batches")
-            train_dataloader = accelerator.skip_first_batches(train_dataloader, resume_step)
-            resume_step = None
-            accelerator.wait_for_everyone()
+        # if resume_step is not None:
+        #     # Skip the first N batches in the dataloader when resuming from a checkpoint
+        #     logger.info(f"  Skip first {resume_step} batches")
+        #     train_dataloader = accelerator.skip_first_batches(train_dataloader, resume_step)
+        #     resume_step = None
+        #     accelerator.wait_for_everyone()
 
         for batch in train_dataloader:
             with accelerator.accumulate(model):
-                loss, train_metric = train_step(batch, accelerator, autocast_kwargs)
-                accelerator.backward(loss)
-                if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(model.parameters(), training_args.max_grad_norm)
+                # loss, train_metric = train_step(batch, accelerator, autocast_kwargs)
+                # accelerator.backward(loss)
+                # if accelerator.sync_gradients:
+                #     accelerator.clip_grad_norm_(model.parameters(), training_args.max_grad_norm)
                 
                 memory_before = torch.cuda.memory_allocated()
                 memory_cached = torch.cuda.memory_cached()
-                optimizer.step()
+                # optimizer.step()
                 memory_after = torch.cuda.memory_allocated()
                 print("Memory before {}".format(memory_before))
                 print("Memory cached {}".format(memory_cached))
@@ -1075,52 +1075,52 @@ def main():
                 lr_scheduler.step()
                 optimizer.zero_grad()
 
-            # Check if the accelerator has performed an optimization step behind the scenes
-            if accelerator.sync_gradients:
-                steps_trained_progress_bar.update(1)
-                cur_step += 1
+            # # Check if the accelerator has performed an optimization step behind the scenes
+            # if accelerator.sync_gradients:
+            #     steps_trained_progress_bar.update(1)
+            #     cur_step += 1
 
-                if cur_step % training_args.logging_steps == 0:
-                    steps_trained_progress_bar.write(
-                        f"Step... ({cur_step} / {total_train_steps} | Loss:"
-                        f" {train_metric['loss']}, Learning Rate:"
-                        f" {lr_scheduler.get_last_lr()[0]})"
-                    )
-                    log_metric(
-                        accelerator,
-                        metrics=train_metric,
-                        learning_rate=lr_scheduler.get_last_lr()[0],
-                        train_time=train_time + time.time() - train_start,
-                        step=cur_step,
-                        epoch=epoch,
-                        prefix="train",
-                    )
+            #     if cur_step % training_args.logging_steps == 0:
+            #         steps_trained_progress_bar.write(
+            #             f"Step... ({cur_step} / {total_train_steps} | Loss:"
+            #             f" {train_metric['loss']}, Learning Rate:"
+            #             f" {lr_scheduler.get_last_lr()[0]})"
+            #         )
+            #         log_metric(
+            #             accelerator,
+            #             metrics=train_metric,
+            #             learning_rate=lr_scheduler.get_last_lr()[0],
+            #             train_time=train_time + time.time() - train_start,
+            #             step=cur_step,
+            #             epoch=epoch,
+            #             prefix="train",
+            #         )
 
-                # save checkpoint and weights after each save_steps and at the end of training
-                if (cur_step % training_args.save_steps == 0) or cur_step == total_train_steps:
-                    intermediate_dir = os.path.join(training_args.output_dir, f"checkpoint-{cur_step}-epoch-{epoch}")
-                    # safe_serialization=False to avoid shared tensors saving issue (TODO(YL): it's a temporary fix)
-                    # https://github.com/huggingface/transformers/issues/27293#issuecomment-1872560074
-                    accelerator.save_state(output_dir=intermediate_dir, safe_serialization=False)
-                    accelerator.wait_for_everyone()
-                    if accelerator.is_main_process:
-                        rotate_checkpoints(
-                            training_args.save_total_limit, output_dir=training_args.output_dir, logger=logger
-                        )
+            #     # save checkpoint and weights after each save_steps and at the end of training
+            #     if (cur_step % training_args.save_steps == 0) or cur_step == total_train_steps:
+            #         intermediate_dir = os.path.join(training_args.output_dir, f"checkpoint-{cur_step}-epoch-{epoch}")
+            #         # safe_serialization=False to avoid shared tensors saving issue (TODO(YL): it's a temporary fix)
+            #         # https://github.com/huggingface/transformers/issues/27293#issuecomment-1872560074
+            #         accelerator.save_state(output_dir=intermediate_dir, safe_serialization=False)
+            #         accelerator.wait_for_everyone()
+            #         if accelerator.is_main_process:
+            #             rotate_checkpoints(
+            #                 training_args.save_total_limit, output_dir=training_args.output_dir, logger=logger
+            #             )
 
-                        if cur_step == total_train_steps:
-                            # un-wrap student model for save
-                            unwrapped_model = accelerator.unwrap_model(model)
-                            unwrapped_model.save_pretrained(training_args.output_dir)
+            #             if cur_step == total_train_steps:
+            #                 # un-wrap student model for save
+            #                 unwrapped_model = accelerator.unwrap_model(model)
+            #                 unwrapped_model.save_pretrained(training_args.output_dir)
 
-                        if training_args.push_to_hub:
-                            api.upload_folder(
-                                repo_id=repo_id,
-                                folder_path=training_args.output_dir,
-                                commit_message=f"Saving train state of step {cur_step}",
-                                run_as_future=True,
-                            )
-                    accelerator.wait_for_everyone()
+            #             if training_args.push_to_hub:
+            #                 api.upload_folder(
+            #                     repo_id=repo_id,
+            #                     folder_path=training_args.output_dir,
+            #                     commit_message=f"Saving train state of step {cur_step}",
+            #                     run_as_future=True,
+            #                 )
+            #         accelerator.wait_for_everyone()
 
                 if training_args.do_eval and (cur_step % eval_steps == 0 or cur_step == total_train_steps):
                     train_time += time.time() - train_start

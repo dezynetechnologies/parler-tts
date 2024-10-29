@@ -1442,8 +1442,13 @@ class ParlerTTSDecoder(ParlerTTSPreTrainedModel):
         # NOTE: 2. we want to concatenate the prompt attention mask and the decoder attention mask
         # i.i.f `prompt_cross_attention=False`. ParlerTTSForConditionalGeneration's taking care of setting
         # `prompt_attention_mask=None`
+        # import ipdb; ipdb.set_trace();
         if prompt_attention_mask is not None and attention_mask is not None:
-            attention_mask = torch.cat([prompt_attention_mask, attention_mask], dim=1)
+            try:
+                attention_mask = torch.cat([prompt_attention_mask, attention_mask.to(prompt_attention_mask.device)], dim=1)
+            except Exception as ex:
+                import ipdb; ipdb.set_trace()
+                print(ex)
         elif prompt_attention_mask is not None:
             logger.warning_once(
                 "`prompt_attention_mask` is specified but `attention_mask` is not. A full `attention_mask` will be created. Make sure this is the intended behaviour."
@@ -3442,6 +3447,23 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         #embedding = embedding / np.linalg.norm(embedding)
         return embedding
 
+    def convert_to_2d_tensor(self, input):
+        
+        
+        # if input.dim() == 2:
+        # # If 2D, add a batch dimension (N=1, C=channels, L=length)
+        #     input = input.unsqueeze(0)  # Now shape is [1, C, L]
+        if input.dim() == 1:
+        # If 1D, make it [1, 1, L] (1 batch, 1 channel)
+            input = input.unsqueeze(0) # Now shape is [1, 1, L]
+        elif input.dim() > 2:
+            # If more than 3D, reshape or flatten accordingly
+            # Example: if tensor is [N, C, D1, D2], we can flatten D1 and D2
+            shape = input.size()
+            input = input.view(shape[0], -1)  # Reshape to [N, C, L]
+    
+        return input
+
     # Function to extract speaker embedding
     def extract_speaker_encoder_hidden_state(self,audio):
         # Step 1: Load Pre-trained Wav2Vec 2.0 Model and Processor
@@ -3451,6 +3473,8 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
         self.speaker_encoder = Wav2Vec2Model.from_pretrained('facebook/wav2vec2-base')
         self.speaker_encoder.eval()
         input_values = self.speaker_audio_processor(audio, sampling_rate=16000, return_tensors='pt').input_values
+
+        input_values = self.convert_to_2d_tensor(input_values)
         # import ; .set_trace();
         with torch.no_grad():
             outputs = self.speaker_encoder(input_values)
@@ -3524,9 +3548,9 @@ class ParlerTTSForConditionalGeneration(PreTrainedModel):
 
 
 
-    def _prepare_speaker_embedding(self, f_path):
+    def _prepare_speaker_embedding(self, audio, f_path=None):
         # Load and preprocess audio
-        audio = self.load_audio(f_path)
+        # audio = self.load_audio(f_path)
         # Extract speaker embedding
         #embedding = self.extract_embedding(audio)
         # return self.extract_speaker_encoder_hidden_state(audio)

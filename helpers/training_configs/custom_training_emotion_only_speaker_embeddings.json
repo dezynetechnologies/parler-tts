@@ -48,7 +48,7 @@
     "warmup_steps":  20000,
 
 
-    "logging_steps": 1000,
+    "logging_steps": 250,
     "freeze_text_encoder": true,
 
 
@@ -57,14 +57,15 @@
     "include_inputs_for_metrics": true,
     "evaluation_strategy": "steps",
     "eval_steps": 10000,
-    "save_steps": 10000,
+    "save_steps": 1000,
 
-    "per_device_eval_batch_size": 4,
+    "per_device_eval_batch_size": 1,
 
     "audio_encoder_per_device_batch_size":24,
     "dtype": "bfloat16",
     "seed": 456,
 
     "dataloader_num_workers":8,
-    "attn_implementation": "sdpa"
+    "attn_implementation": "sdpa",
+    "report_to": ["wandb"]
 }
