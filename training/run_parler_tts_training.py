@@ -1018,7 +1018,7 @@ def main():
         metrics = {"loss": ce_loss}
         return metrics
 
-    def generate_step(batch, accelerator):
+    def generate_step(batch, accelerator, curr_step):
         batch.pop("decoder_attention_mask", None)
         eval_model = accelerator.unwrap_model(model, keep_fp32_wrapper=True)
         if training_args.torch_compile:
@@ -1027,8 +1027,30 @@ def main():
 
         # since we've might have loaded the weights in fp32, we have to autocast to ensure FA2 weights are in half-precision.
         # with accelerator.autocast(autocast_handler=AutocastKwargs(enabled=(attn_implementation=="flash_attention_2"))):
+        # import ipdb; ipdb.set_trace();
+        # import ipdb; ipdb.set_trace()
         output_audios = eval_model.generate(**batch, **gen_kwargs)
         output_audios = accelerator.pad_across_processes(output_audios, dim=1, pad_index=0)
+        audio_arr = output_audios.cpu().numpy().squeeze()
+        import uuid
+        import soundfile as sf
+        audio_id = uuid.uuid1()
+        eval_dir = "eval_outputs_custom"
+        texts = description_tokenizer.batch_decode(batch.get('input_ids'), skip_special_tokens=True)
+        audio_name = "eval_{}_{}.wav".format(curr_step, audio_id) 
+        file_path = os.path.join(eval_dir, audio_name)
+        sf.write(file_path, audio_arr, model.config.sampling_rate)
+        import csv
+        csv_filename = "eval_outputs.csv"
+        csv_path = os.path.join(eval_dir, csv_filename)
+        with open(csv_path, mode='a', newline='') as csv_file:
+            writer = csv.writer(csv_file)
+            # Write header only if the file is newly created
+            if csv_file.tell() == 0:
+                writer.writerow(["file_path", "text"])  # Header row
+            text = texts[0] if texts else ""
+            writer.writerow([file_path, text])  # Append the new file path
+         
         return output_audios
 
     model.train()
@@ -1066,14 +1088,16 @@ def main():
                 #     accelerator.clip_grad_norm_(model.parameters(), training_args.max_grad_norm)
                 
                 memory_before = torch.cuda.memory_allocated()
-                memory_cached = torch.cuda.memory_cached()
+                steps_trained_progress_bar.update(1)
+                cur_step += 1
+                # memory_cached = torch.cuda.memory_cached()
                 # optimizer.step()
-                memory_after = torch.cuda.memory_allocated()
-                print("Memory before {}".format(memory_before))
-                print("Memory cached {}".format(memory_cached))
-                print("Memory after {}".format(memory_after))
-                lr_scheduler.step()
-                optimizer.zero_grad()
+                # memory_after = torch.cuda.memory_allocated()
+                # print("Memory before {}".format(memory_before))
+                # print("Memory cached {}".format(memory_cached))
+                # print("Memory after {}".format(memory_after))
+                # lr_scheduler.step()
+                # optimizer.zero_grad()
 
             # # Check if the accelerator has performed an optimization step behind the scenes
             # if accelerator.sync_gradients:
@@ -1122,7 +1146,9 @@ def main():
             #                 )
             #         accelerator.wait_for_everyone()
 
-                if training_args.do_eval and (cur_step % eval_steps == 0 or cur_step == total_train_steps):
+                # if training_args.do_eval and (cur_step % eval_steps == 0 or cur_step == total_train_steps):
+                if training_args.do_eval and (cur_step == total_train_steps):    
+                    # cur_step += 1
                     train_time += time.time() - train_start
                     # ======================== Evaluating ==============================
                     model.eval()
@@ -1174,7 +1200,7 @@ def main():
                             position=2,
                             disable=not accelerator.is_local_main_process,
                         ):
-                            generated_audios = generate_step(batch, accelerator)
+                            generated_audios = generate_step(batch, accelerator, cur_step)
                             # Gather all predictions and targets
                             generated_audios, input_ids, prompts = accelerator.pad_across_processes(
                                 (generated_audios, batch["input_ids"], batch["prompt_input_ids"]), dim=1, pad_index=0
@@ -1244,6 +1270,8 @@ def main():
                         prefix="eval",
                     )
 
+                    # Update step for eval
+                    # cur_step += 1
                     # release eval batch and relax metrics
                     eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric = release_memory(
                         eval_metrics, eval_preds, eval_descriptions, eval_prompts, batch, eval_metric
